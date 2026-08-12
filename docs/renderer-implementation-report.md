@@ -2,9 +2,10 @@
 
 ## Status
 
-Planning and source audit are in progress. Native Flow and VAE inference are
-not yet implemented. The v0.1 official Python decoder remains the working WAV
-path until every release gate in `renderer-plan.md` passes.
+Native VAE inference and the Flow conditioning boundary are implemented. The
+remaining critical path is the 16-block Flow estimator, Euler integration, and
+the public tokens-to-WAV API. The v0.1 official Python decoder remains the
+released WAV path until every release gate in `renderer-plan.md` passes.
 
 ## Baseline
 
@@ -52,6 +53,8 @@ work:
 | `a27bca5` | VAE loader | Strict 145-tensor F32/F16 GGUF loader |
 | `90f3df1` | VAE decoder | Complete native five-stage Oobleck graph |
 | `6cb1308` | Flow loader | Strict 231-tensor F32/F16 GGUF loader |
+| `573a539` | VAE parity | Stage-level CPU/CUDA official-oracle gate |
+| `a08c4a5` | Flow conditioning | RVQ projection, masks, positions, and latent normalization |
 
 The strict Flow converter produced `LeVo2-v2-flow-F32.gguf` with 231 tensors,
 663,310,785 parameters, 2,653,259,456 bytes, and SHA-256
@@ -90,3 +93,15 @@ PyTorch oracle on both tested backends:
 This is within the frozen F32 waveform gates (`3e-3` maximum error and `1e-3`
 relative RMS) without threshold changes. The local strict Flow and VAE loaders
 also loaded their complete 231- and 145-tensor F32 artifacts successfully.
+
+The diagnostic parity runner additionally checks all five VAE decoder stages.
+The CPU and CUDA T=1/T=2 cases pass the frozen stage gates of maximum error
+`<= 2e-3`, RMSE `<= 2.5e-4`, and cosine `>= 0.9999995`; the worst observed
+stage maximum error was `1.45030e-3` and the worst waveform maximum error was
+`3.22908e-4`.
+
+The native Flow conditioning boundary was compared with the official two-frame
+F32 input oracle. Codebook lookups, mask embeddings, position embeddings, and
+the null condition are bit-exact. The projected vocal and BGM conditions have
+maximum errors `8.94070e-8` and `5.96046e-8`, respectively, far inside the
+frozen `5e-5` conditioning gate.
