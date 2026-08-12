@@ -107,7 +107,7 @@ It does not add audio-prompt encoding, source separation, or token extraction.
    - Push `feat: add VAE GGUF conversion and loading`.
 
 8. **VAE decoder graph**
-   - Implement reflection padding, Conv1d, ConvTranspose1d, residual units,
+   - Implement zero padding, Conv1d, ConvTranspose1d, residual units,
      SnakeBeta, stage cropping, and final stereo projection.
    - Pass per-stage and full-waveform gates in F32 before evaluating F16.
    - Push `feat: port native Oobleck VAE decoder`.
