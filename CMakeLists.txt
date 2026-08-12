@@ -102,6 +102,9 @@ if(LEVO_BUILD_PARITY_TOOLS)
     add_executable(levo-flow-parity tools/levo-flow-parity.cpp)
     target_link_libraries(levo-flow-parity PRIVATE levo::core)
     target_include_directories(levo-flow-parity PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    add_executable(levo-render-parity tools/levo-render-parity.cpp)
+    target_link_libraries(levo-render-parity PRIVATE levo::core)
+    target_include_directories(levo-render-parity PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 endif()
 
 set_target_properties(levo-core levo-cli levo-render PROPERTIES
