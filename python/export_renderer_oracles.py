@@ -330,9 +330,10 @@ def _load_flow_model(source_dir: Path, runtime_dir: Path, device: str, *, dtype=
     state = load_file(str(checkpoint), device=str(device_obj))
     model.load_state_dict(state, strict=False)
     model.eval()
-    model_dtype = torch.float32 if dtype is None else dtype
-    model = model.to(device=device_obj, dtype=model_dtype)
-    model.init_device_dtype(device_obj, model_dtype)
+    # Keep Flow weights in F32 for stable reference execution.  ``dtype``
+    # controls the VAE/output side; optional CUDA autocast is the explicit
+    # mechanism for a reduced-precision Flow run.
+    model.init_device_dtype(device_obj, torch.float32)
     return model
 
 
