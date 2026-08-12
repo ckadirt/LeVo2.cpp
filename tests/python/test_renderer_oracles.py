@@ -82,6 +82,49 @@ def test_npz_writer_is_deterministic_and_records_array_statistics(tmp_path: Path
     assert len(manifest["arrays"]["a"]["sha256"]) == 64
 
 
+def test_renderer_dry_contract_validates_canonical_tokens_and_window_noise(tmp_path: Path) -> None:
+    tokens = np.vstack([
+        np.arange(1250, dtype=np.int32) % 16_384,
+        (np.arange(1250, dtype=np.int32) + 1) % 16_384,
+        (np.arange(1250, dtype=np.int32) + 2) % 16_384,
+    ])
+    noise = np.zeros((2, 1000, 64), dtype=np.float32)
+    tokens_path = tmp_path / "tokens.npy"
+    noise_path = tmp_path / "noise.npy"
+    output = tmp_path / "renderer-contract.npz"
+    np.save(tokens_path, tokens, allow_pickle=False)
+    np.save(noise_path, noise, allow_pickle=False)
+    _run(
+        "render", "--dry-run", "--tokens", str(tokens_path), "--noise", str(noise_path), "--steps", "1",
+        output=output,
+    )
+    values = np.load(output, allow_pickle=False)
+    assert values["tokens"].shape == (3, 1250)
+    assert values["window_major_noise"].shape == (2, 1000, 64)
+    assert values["window_starts"].tolist() == [0, 750]
+    manifest = json.loads(output.with_suffix(".json").read_text(encoding="utf-8"))
+    assert manifest["kind"] == "renderer_contract"
+    assert manifest["padded_frames"] == 1750
+    assert manifest["window_count"] == 2
+
+
+def test_renderer_dry_contract_rejects_noncanonical_noise(tmp_path: Path) -> None:
+    tokens_path = tmp_path / "tokens.npy"
+    noise_path = tmp_path / "noise.npy"
+    output = tmp_path / "renderer-contract.npz"
+    np.save(tokens_path, np.zeros((3, 1000), dtype=np.int32), allow_pickle=False)
+    np.save(noise_path, np.zeros((1, 1000, 64), dtype=np.float64), allow_pickle=False)
+    result = subprocess.run(
+        [
+            sys.executable, str(SCRIPT), "render", "--dry-run",
+            "--source-dir", str(SOURCE_DIR), "--runtime-dir", str(RUNTIME_DIR), "--device", "cpu",
+            "--tokens", str(tokens_path), "--noise", str(noise_path), "--output", str(output),
+        ], text=True, capture_output=True,
+    )
+    assert result.returncode != 0
+    assert "must be F32" in (result.stderr + result.stdout)
+
+
 def test_vae_tiny_capture_shape_and_finiteness(tmp_path: Path) -> None:
     if not VAE_CHECKPOINT.is_file():
         pytest.skip(f"official VAE checkpoint unavailable: {VAE_CHECKPOINT}")

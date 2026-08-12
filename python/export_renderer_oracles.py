@@ -45,6 +45,11 @@ FLOW_MASK_DIM = 24
 FLOW_DEFAULT_FRAMES = 1000
 FLOW_DEFAULT_STEPS = 50
 VAE_DOWNSAMPLING = 1920
+FLOW_WINDOW_FRAMES = 1000
+FLOW_HOP_FRAMES = 750
+FLOW_OVERLAP_FRAMES = 250
+MAX_RENDER_FRAMES = 10_000
+MAX_RENDER_WINDOWS = 64
 FLOW_CHECKPOINT_SHA256 = "430b7c1c245722fbe3893cd621b3d4a90076404596e9fb1ce987a4a0f2a4fc6f"
 VAE_CHECKPOINT_SHA256 = "10ccb6c83613781ad32e998a90597ba7eb9292911a224598da1fd53728eb4cd3"
 VAE_CONFIG_SHA256 = "5cd2859efe00bc2b0f6f9bdac738ad11822a36473d6d810427b60efd057c538b"
@@ -123,7 +128,22 @@ def _provenance(
     autocast: bool,
     seed: int | None,
 ) -> dict[str, Any]:
-    import torch
+    try:
+        import torch
+    except ModuleNotFoundError:
+        # The dry/input contract path is intentionally usable from a minimal
+        # Python environment without importing the GPU renderer stack.
+        return {
+            "source_revision": SOURCE_REVISION,
+            "runtime_revision": RUNTIME_REVISION,
+            "source_dir": str(source_dir),
+            "runtime_dir": str(runtime_dir),
+            "torch_version": None,
+            "device": device,
+            "dtype": dtype,
+            "autocast": bool(autocast),
+            "seed": seed,
+        }
 
     result: dict[str, Any] = {
         "source_revision": SOURCE_REVISION,
@@ -246,7 +266,47 @@ def _load_flow_noise(path: Path | None, *, frames: int, device: str, seed: int) 
     return value.astype("<f4", copy=False), None
 
 
-def _load_flow_model(source_dir: Path, runtime_dir: Path, device: str):
+def _load_render_tokens(path: Path) -> np.ndarray:
+    """Load the canonical renderer token boundary ``[3,T]``."""
+    value = _load_npy(path, name="renderer tokens")
+    if value.ndim != 2 or value.shape[0] != 3 or value.shape[1] <= 0:
+        raise ValueError(f"renderer tokens must have canonical shape [3,T], got {value.shape}")
+    if not np.issubdtype(value.dtype, np.integer):
+        raise ValueError(f"renderer tokens must contain integer IDs, got {value.dtype}")
+    if value.shape[1] > MAX_RENDER_FRAMES:
+        raise ValueError(f"renderer tokens exceed the strict {MAX_RENDER_FRAMES}-frame limit")
+    value = value.astype("<i8", copy=False)
+    if np.any(value < 0) or np.any(value >= CODEBOOK_SIZE):
+        raise ValueError(f"renderer tokens contain an ID outside [0,{CODEBOOK_SIZE - 1}]")
+    return value
+
+
+def _render_window_plan(frames: int) -> tuple[int, np.ndarray]:
+    if frames <= 0 or frames > MAX_RENDER_FRAMES:
+        raise ValueError(f"renderer frame count must be in [1,{MAX_RENDER_FRAMES}]")
+    if frames <= FLOW_WINDOW_FRAMES:
+        padded = FLOW_WINDOW_FRAMES
+    else:
+        padded = ((frames - FLOW_OVERLAP_FRAMES + FLOW_HOP_FRAMES - 1) // FLOW_HOP_FRAMES) * FLOW_HOP_FRAMES + FLOW_OVERLAP_FRAMES
+    starts = np.arange(0, padded - FLOW_OVERLAP_FRAMES, FLOW_HOP_FRAMES, dtype=np.int64)
+    if starts.size == 0 or starts[-1] + FLOW_WINDOW_FRAMES > padded:
+        raise AssertionError("invalid Flow window plan")
+    if starts.size > MAX_RENDER_WINDOWS:
+        raise ValueError(f"renderer requires {starts.size} windows; strict limit is {MAX_RENDER_WINDOWS}")
+    return padded, starts
+
+
+def _load_render_noise(path: Path, *, windows: int) -> np.ndarray:
+    value = _load_npy(path, name="window-major renderer noise")
+    expected = (windows, FLOW_WINDOW_FRAMES, FLOW_LATENT_DIM)
+    if value.shape != expected:
+        raise ValueError(f"window-major renderer noise must have shape [windows,1000,64]={expected}, got {value.shape}")
+    if value.dtype.kind != "f" or value.dtype.itemsize != 4:
+        raise ValueError(f"window-major renderer noise must be F32, got {value.dtype}")
+    return value.astype("<f4", copy=False)
+
+
+def _load_flow_model(source_dir: Path, runtime_dir: Path, device: str, *, dtype=None):
     import torch
     from safetensors.torch import load_file
 
@@ -270,7 +330,9 @@ def _load_flow_model(source_dir: Path, runtime_dir: Path, device: str):
     state = load_file(str(checkpoint), device=str(device_obj))
     model.load_state_dict(state, strict=False)
     model.eval()
-    model.init_device_dtype(device_obj, torch.float32)
+    model_dtype = torch.float32 if dtype is None else dtype
+    model = model.to(device=device_obj, dtype=model_dtype)
+    model.init_device_dtype(device_obj, model_dtype)
     return model
 
 
@@ -549,6 +611,213 @@ def _flow_velocity(args: argparse.Namespace, trace: bool) -> None:
     )
 
 
+def _load_vae_renderer(args: argparse.Namespace):
+    """Load the pinned decoder used by the official renderer."""
+    flow_dir = _prepare_official_imports(args.source_dir, args.runtime_dir)
+    previous_cwd = Path.cwd()
+    os.chdir(flow_dir)
+    try:
+        from tools.get_1dvae_large import get_model
+    finally:
+        os.chdir(previous_cwd)
+    config = _require_file(args.runtime_dir / VAE_CONFIG, "VAE config")
+    checkpoint = _require_file(args.runtime_dir / VAE_CHECKPOINT, "VAE checkpoint")
+    config_sha256 = _sha256_file(config)
+    checkpoint_sha256 = _sha256_file(checkpoint)
+    if config_sha256 != VAE_CONFIG_SHA256 or checkpoint_sha256 != VAE_CHECKPOINT_SHA256:
+        raise ValueError("VAE checkpoint/config SHA-256 does not match the pinned renderer contract")
+    import torch
+
+    device = _torch_device(args.device)
+    dtype = torch.float16 if args.dtype == "float16" else torch.float32
+    if dtype == torch.float16 and device.type != "cuda":
+        raise ValueError("renderer float16 capture requires a CUDA device")
+    model = get_model(str(config), str(checkpoint)).to(device=device, dtype=dtype).eval()
+    return model, checkpoint_sha256, config_sha256
+
+
+def _render_flow_window(model, vocal_codes, bgm_codes, noise, *, prior, steps, guidance, device, autocast):
+    """Run one official estimator continuation window from explicit noise."""
+    import torch
+
+    frames = vocal_codes.shape[-1]
+    cv = torch.from_numpy(vocal_codes).to(device=device, dtype=torch.long).view(1, 1, frames)
+    cb = torch.from_numpy(bgm_codes).to(device=device, dtype=torch.long).view(1, 1, frames)
+    with torch.inference_mode():
+        activation_dtype = next(model.cfm_wrapper.estimator.parameters()).dtype
+        vocal_q, _, _ = model.rvq_bestrq_emb.from_codes(cv)
+        bgm_q, _, _ = model.rvq_bestrq_bgm_emb.from_codes(cb)
+        conditioning = torch.cat([vocal_q.permute(0, 2, 1), bgm_q.permute(0, 2, 1)], dim=-1)
+        mask_ids = torch.full((1, frames), 2, device=device, dtype=torch.long)
+        incontext = torch.zeros((1, frames, FLOW_LATENT_DIM), device=device, dtype=activation_dtype)
+        incontext_length = 0
+        if prior is not None:
+            incontext_length = FLOW_OVERLAP_FRAMES
+            mask_ids[:, :incontext_length] = 1
+            incontext[:, :incontext_length] = prior[:, -incontext_length:]
+        mask = model.mask_emb(mask_ids)
+        attention = (mask_ids > 0).view(1, 1, frames)
+        attention = (attention & attention.transpose(-1, -2)).unsqueeze(1)
+        latent = torch.from_numpy(noise).to(device=device, dtype=activation_dtype).clone()
+        original_noise = latent.clone()
+        t_span = torch.linspace(0.0, 1.0, steps + 1, device=device, dtype=torch.float32)
+        for step in range(steps):
+            t = t_span[step]
+            if incontext_length:
+                latent[:, :incontext_length] = (
+                    (1.0 - (1.0 - model.cfm_wrapper.sigma_min) * t) * original_noise[:, :incontext_length]
+                    + t * incontext[:, :incontext_length]
+                )
+            model_input = _flow_model_input(mask, incontext, conditioning, latent, guidance=True)
+            timestep = t.repeat(2)
+            use_autocast = autocast or activation_dtype == torch.float16
+            context = torch.autocast("cuda", dtype=torch.float16) if use_autocast else nullcontext()
+            with context:
+                full = model.cfm_wrapper.estimator(
+                    inputs_embeds=model_input,
+                    attention_mask=attention.repeat(2, 1, 1, 1),
+                    time_step=timestep,
+                ).last_hidden_state
+            raw = full[..., -FLOW_LATENT_DIM:]
+            uncond, cond = raw.chunk(2, dim=0)
+            latent = latent + (t_span[step + 1] - t) * (uncond + guidance * (cond - uncond))
+        if incontext_length:
+            latent[:, :incontext_length] = incontext[:, :incontext_length]
+        normalized = latent.float()
+        denormalized = model.normfeat.return_sample(normalized.permute(0, 2, 1).contiguous()).float()
+    return normalized, denormalized
+
+
+def _crossfade_audio(windows, *, target_samples: int):
+    import torch
+
+    if not windows:
+        raise ValueError("at least one decoded audio window is required")
+    overlap = FLOW_OVERLAP_FRAMES * VAE_DOWNSAMPLING
+    output = windows[0]
+    blend = torch.linspace(0.0, 1.0, overlap, device=output.device, dtype=output.dtype).view(1, -1)
+    for current in windows[1:]:
+        if output.shape[-1] < overlap or current.shape[-1] < overlap:
+            raise ValueError("decoded VAE window is shorter than the required overlap")
+        output = output.clone()
+        output[:, -overlap:] = output[:, -overlap:] * (1.0 - blend) + current[:, :overlap] * blend
+        output = torch.cat([output, current[:, overlap:]], dim=-1)
+    return output[:, :target_samples]
+
+
+def _render_contract(args: argparse.Namespace) -> None:
+    tokens = _load_render_tokens(args.tokens)
+    padded, starts = _render_window_plan(tokens.shape[1])
+    noise = _load_render_noise(args.noise, windows=len(starts))
+    _save_npz(
+        args.output,
+        {
+            "tokens": tokens.astype("<i4"),
+            "window_starts": starts,
+            "window_major_noise": noise,
+        },
+        {
+            "format": "levo2-renderer-oracle-v1",
+            "kind": "renderer_contract",
+            "schema_version": 1,
+            "frames": int(tokens.shape[1]),
+            "padded_frames": int(padded),
+            "window_count": int(len(starts)),
+            "window_frames": FLOW_WINDOW_FRAMES,
+            "hop_frames": FLOW_HOP_FRAMES,
+            "overlap_frames": FLOW_OVERLAP_FRAMES,
+            "steps": args.steps,
+            "guidance_scale": args.guidance,
+            "dry_run": True,
+            "input_sha256": {"tokens": _sha256_file(args.tokens), "noise": _sha256_file(args.noise)},
+            "provenance": _provenance(
+                source_dir=args.source_dir, runtime_dir=args.runtime_dir,
+                device=args.device, dtype=args.dtype, autocast=args.autocast, seed=None,
+            ),
+        },
+    )
+
+
+def _render_end_to_end(args: argparse.Namespace) -> None:
+    import torch
+
+    if args.autocast and not args.device.startswith("cuda"):
+        raise ValueError("--autocast requires a CUDA device")
+    if args.steps not in (1, FLOW_DEFAULT_STEPS):
+        raise ValueError("end-to-end renderer oracle --steps must be 1 or 50")
+    tokens = _load_render_tokens(args.tokens)
+    padded, starts = _render_window_plan(tokens.shape[1])
+    noise = _load_render_noise(args.noise, windows=len(starts))
+    device = _torch_device(args.device)
+    dtype = torch.float16 if args.dtype == "float16" else torch.float32
+    flow = _load_flow_model(args.source_dir, args.runtime_dir, args.device, dtype=dtype)
+    normalized_windows = []
+    denormalized_windows = []
+    prior = None
+    padded_tokens = np.tile(tokens, (1, (padded + tokens.shape[1] - 1) // tokens.shape[1]))[:, :padded]
+    with torch.inference_mode():
+        for index, start in enumerate(starts.tolist()):
+            vocal = padded_tokens[1, start:start + FLOW_WINDOW_FRAMES]
+            bgm = padded_tokens[2, start:start + FLOW_WINDOW_FRAMES]
+            normalized, denormalized = _render_flow_window(
+                flow, vocal, bgm, noise[index:index + 1], prior=prior,
+                steps=args.steps, guidance=args.guidance, device=device,
+                autocast=args.autocast or dtype == torch.float16,
+            )
+            normalized_windows.append(normalized)
+            denormalized_windows.append(denormalized)
+            prior = normalized
+
+    vae, vae_checkpoint_sha256, vae_config_sha256 = _load_vae_renderer(args)
+    decoded_windows = []
+    vae_dtype = next(vae.parameters()).dtype
+    with torch.inference_mode():
+        for latent in denormalized_windows:
+            decoded_windows.append(vae.decode_audio(latent.to(dtype=vae_dtype), chunked=False)[0].float())
+    audio = _crossfade_audio(decoded_windows, target_samples=tokens.shape[1] * VAE_DOWNSAMPLING)
+    arrays: dict[str, np.ndarray] = {
+        "tokens": tokens.astype("<i4"),
+        "window_starts": starts,
+        "window_major_noise": noise,
+        "final_latent_normalized": torch.cat(normalized_windows, dim=0).cpu().numpy().astype("<f4"),
+        "final_latent_denormalized": torch.cat(denormalized_windows, dim=0).cpu().numpy().astype("<f4"),
+        "audio": audio.cpu().numpy().astype("<f4"),
+    }
+    for index, decoded in enumerate(decoded_windows):
+        arrays[f"decoded_window_{index:03d}"] = decoded.cpu().numpy().astype("<f4")
+    _save_npz(
+        args.output, arrays,
+        {
+            "format": "levo2-renderer-oracle-v1",
+            "kind": "renderer_end_to_end",
+            "schema_version": 1,
+            "frames": int(tokens.shape[1]),
+            "padded_frames": int(padded),
+            "window_count": int(len(starts)),
+            "window_frames": FLOW_WINDOW_FRAMES,
+            "hop_frames": FLOW_HOP_FRAMES,
+            "overlap_frames": FLOW_OVERLAP_FRAMES,
+            "sample_rate": 48_000,
+            "downsampling_ratio": VAE_DOWNSAMPLING,
+            "steps": args.steps,
+            "guidance_scale": args.guidance,
+            "input_sha256": {"tokens": _sha256_file(args.tokens), "noise": _sha256_file(args.noise)},
+            "flow_checkpoint_sha256": FLOW_CHECKPOINT_SHA256,
+            "vae_checkpoint_sha256": vae_checkpoint_sha256,
+            "vae_config_sha256": vae_config_sha256,
+            "provenance": _provenance(
+                source_dir=args.source_dir, runtime_dir=args.runtime_dir,
+                device=args.device, dtype=args.dtype, autocast=args.autocast, seed=None,
+            ),
+        },
+    )
+    if args.wav_output:
+        import soundfile as sf
+
+        args.wav_output.parent.mkdir(parents=True, exist_ok=True)
+        sf.write(str(args.wav_output), arrays["audio"][0].T, 48_000, subtype="FLOAT")
+
+
 def _load_latent(path: Path | None, *, frames: int, device: str, seed: int) -> tuple[Any, int | None]:
     import torch
 
@@ -671,6 +940,17 @@ def build_parser() -> argparse.ArgumentParser:
     vae.add_argument("--latent", type=Path)
     vae.add_argument("--dtype", choices=("float32", "float16"), default="float32")
     vae.add_argument("--wav-output", type=Path)
+
+    render = subparsers.add_parser("render", help="run the deterministic official Flow/VAE renderer oracle")
+    _add_common(render)
+    render.add_argument("--tokens", type=Path, required=True, help="canonical integer token array [3,T] (mixed,vocal,bgm)")
+    render.add_argument("--noise", type=Path, required=True, help="explicit F32 window-major noise [windows,1000,64]")
+    render.add_argument("--steps", type=int, choices=(1, FLOW_DEFAULT_STEPS), default=FLOW_DEFAULT_STEPS)
+    render.add_argument("--guidance", type=float, default=1.5)
+    render.add_argument("--dtype", choices=("float32", "float16"), default="float32")
+    render.add_argument("--autocast", action="store_true")
+    render.add_argument("--dry-run", action="store_true", help="validate inputs and export the window plan without loading checkpoints")
+    render.add_argument("--wav-output", type=Path)
     return parser
 
 
@@ -679,6 +959,11 @@ def main(argv: list[str] | None = None) -> None:
     args.source_dir = args.source_dir.resolve()
     args.runtime_dir = args.runtime_dir.resolve()
     args.output = args.output.resolve()
+    if args.command == "render":
+        args.tokens = args.tokens.resolve()
+        args.noise = args.noise.resolve()
+        if args.wav_output:
+            args.wav_output = args.wav_output.resolve()
     if args.command == "flow":
         if args.mode == "inventory":
             _flow_inventory(args.source_dir, args.runtime_dir, args.output, args.device, args.seed)
@@ -690,8 +975,12 @@ def main(argv: list[str] | None = None) -> None:
             if not 0.0 <= args.time <= 1.0:
                 raise ValueError("--time must be in [0,1]")
             _flow_velocity(args, trace=args.mode == "trace")
-    else:
+    elif args.command == "vae":
         _vae_capture(args)
+    elif args.dry_run:
+        _render_contract(args)
+    else:
+        _render_end_to_end(args)
 
 
 if __name__ == "__main__":
