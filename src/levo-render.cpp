@@ -1,5 +1,6 @@
 #include "levo.h"
 
+#include "levo-cuda-precision.h"
 #include "levo-flow-model.h"
 #include "levo-flow-renderer.h"
 #include "levo-renderer-pattern.h"
@@ -170,6 +171,10 @@ render_result render_tokens_to_audio(const render_config & config,
     require_finite(noise, "external noise");
 
     ggml_backend_dev_t device = select_device(config.backend, config.device_index);
+    // Must precede backend initialization: this is the difference between a
+    // true F32 renderer and a TF32 one on Ampere and later.
+    detail::configure_cuda_gemm_f32_accumulation(device);
+    detail::configure_cuda_disable_tf32(device);
     backend_ptr backend(ggml_backend_dev_init(device, nullptr));
     if (!backend) fail("cannot initialize selected GGML backend");
 

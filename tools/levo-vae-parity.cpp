@@ -4,6 +4,8 @@
 #include "levo-vae-model.h"
 #include "levo-vae.h"
 
+#include "levo-cuda-precision.h"
+
 #include "ggml-backend.h"
 
 #include <algorithm>
@@ -101,9 +103,14 @@ arguments parse_arguments(int argc, char ** argv) {
         else usage(argv[0], "unknown option " + option);
     }
     if (result.model.empty() || result.latent.empty() || result.audio.empty() || result.frames == 0 ||
-        result.backend.empty() || std::any_of(result.stage.begin(), result.stage.end(), [](const std::string & path) { return path.empty(); })) {
-        usage(argv[0], "all model, input, stage, audio, frame, and backend options are required");
+        result.backend.empty()) {
+        usage(argv[0], "model, latent, audio, frame, and backend options are required");
     }
+    // Stage references are optional so the same tool can gate a full 1000-frame
+    // window, for which the official exporter captures only latent and audio.
+    const bool any_stage = std::any_of(result.stage.begin(), result.stage.end(), [](const std::string & path) { return !path.empty(); });
+    const bool all_stages = std::all_of(result.stage.begin(), result.stage.end(), [](const std::string & path) { return !path.empty(); });
+    if (any_stage && !all_stages) usage(argv[0], "either all five stage references or none");
     if (result.backend != "cpu" && result.backend != "cuda") usage(argv[0], "--backend must be cpu or cuda");
     if (result.max_abs < 0.0F || result.max_rmse < 0.0F || result.min_cosine < -1.0 || result.min_cosine > 1.0) usage(argv[0], "invalid parity thresholds");
     return result;
@@ -169,7 +176,11 @@ void print_metric(const char * label, const metrics & value) {
 int main(int argc, char ** argv) {
     try {
         const arguments args = parse_arguments(argc, argv);
-        backend_ptr backend(ggml_backend_dev_init(select_device(args.backend), nullptr));
+        ggml_backend_dev_t device = select_device(args.backend);
+        // Measure the same precision configuration the production renderer uses.
+        levo::detail::configure_cuda_gemm_f32_accumulation(device);
+        levo::detail::configure_cuda_disable_tf32(device);
+        backend_ptr backend(ggml_backend_dev_init(device, nullptr));
         if (!backend) throw std::runtime_error("failed to initialize backend");
         levo::detail::vae_model_load_options options;
         options.backend = backend.get();
@@ -185,14 +196,18 @@ int main(int argc, char ** argv) {
                                                         256U * 240U * args.frames, 128U * 960U * args.frames,
                                                         128U * 1920U * args.frames}};
         const std::vector<float> latent = read_raw_f32(args.latent, 64U * args.frames, "latent");
+        const bool compare_stages = !args.stage[0].empty();
         std::array<std::vector<float>, 5> expected_stages;
-        for (std::size_t stage = 0; stage < expected_stages.size(); ++stage) expected_stages[stage] = read_raw_f32(args.stage[stage], stage_values[stage], "stage" + std::to_string(stage));
+        if (compare_stages) {
+            for (std::size_t stage = 0; stage < expected_stages.size(); ++stage) expected_stages[stage] = read_raw_f32(args.stage[stage], stage_values[stage], "stage" + std::to_string(stage));
+        }
         const std::vector<float> expected_audio = read_raw_f32(args.audio, 2U * samples, "audio");
-        const auto result = decoder->decode(latent, args.frames, true);
-        if (result.stage_outputs.size() != expected_stages.size() || result.audio.size() != expected_audio.size()) throw std::runtime_error("native decoder returned unexpected capture inventory");
+        const auto result = decoder->decode(latent, args.frames, compare_stages);
+        if (result.audio.size() != expected_audio.size()) throw std::runtime_error("native decoder returned unexpected capture inventory");
+        if (compare_stages && result.stage_outputs.size() != expected_stages.size()) throw std::runtime_error("native decoder returned unexpected capture inventory");
 
         bool success = true;
-        for (std::size_t stage = 0; stage < expected_stages.size(); ++stage) {
+        for (std::size_t stage = 0; compare_stages && stage < expected_stages.size(); ++stage) {
             const metrics value = compare(result.stage_outputs[stage], expected_stages[stage], "stage" + std::to_string(stage));
             print_metric(("stage" + std::to_string(stage)).c_str(), value);
             success = success && passes(value, args);

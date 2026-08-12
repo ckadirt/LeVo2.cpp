@@ -116,6 +116,15 @@ def _torch_device(device: str):
 
     if device.startswith("cuda") and not torch.cuda.is_available():
         raise RuntimeError("CUDA renderer requested but torch.cuda.is_available() is false")
+    if device.startswith("cuda"):
+        # torch.backends.cudnn.allow_tf32 defaults to True, so the decoder's
+        # convolutions would silently run in TF32 with a 10-bit mantissa while
+        # this exporter advertises float32. A TF32 reference is neither the F32
+        # correctness mode nor the FP16-autocast mode of docs/renderer-parity.md,
+        # and at a full 1000-frame window it dominates the comparison. Autocast
+        # captures still opt into FP16 explicitly and are unaffected.
+        torch.backends.cudnn.allow_tf32 = False
+        torch.backends.cuda.matmul.allow_tf32 = False
     return torch.device(device)
 
 

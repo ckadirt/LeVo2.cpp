@@ -3,6 +3,8 @@
 #include "levo-flow-estimator.h"
 #include "levo-flow-model.h"
 
+#include "levo-cuda-precision.h"
+
 #include "ggml-backend.h"
 
 #include <algorithm>
@@ -173,7 +175,11 @@ int main(int argc, char ** argv) {
     try {
         const arguments args = parse_arguments(argc, argv);
         if (args.frames > std::numeric_limits<std::size_t>::max() / (k_batch * k_hidden)) throw std::runtime_error("frame count overflows tensor shape");
-        backend_ptr backend(ggml_backend_dev_init(select_device(args.backend), nullptr));
+        ggml_backend_dev_t device = select_device(args.backend);
+        // Measure the same precision configuration the production renderer uses.
+        levo::detail::configure_cuda_gemm_f32_accumulation(device);
+        levo::detail::configure_cuda_disable_tf32(device);
+        backend_ptr backend(ggml_backend_dev_init(device, nullptr));
         if (!backend) throw std::runtime_error("failed to initialize backend");
         levo::flow::load_options options;
         options.backend = backend.get(); options.allow_f32 = true; options.allow_f16 = false;
