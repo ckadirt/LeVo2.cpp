@@ -55,6 +55,9 @@ work:
 | `6cb1308` | Flow loader | Strict 231-tensor F32/F16 GGUF loader |
 | `573a539` | VAE parity | Stage-level CPU/CUDA official-oracle gate |
 | `a08c4a5` | Flow conditioning | RVQ projection, masks, positions, and latent normalization |
+| `251017c` | Flow estimator | Complete F32 16-block velocity transformer |
+| `a1de25f` | Flow parity | Two-frame official operator/velocity gate |
+| `e66026d` | Flow renderer | CFG, Euler integration, and continuation windows |
 
 The strict Flow converter produced `LeVo2-v2-flow-F32.gguf` with 231 tensors,
 663,310,785 parameters, 2,653,259,456 bytes, and SHA-256
@@ -105,3 +108,17 @@ F32 input oracle. Codebook lookups, mask embeddings, position embeddings, and
 the null condition are bit-exact. The projected vocal and BGM conditions have
 maximum errors `8.94070e-8` and `5.96046e-8`, respectively, far inside the
 frozen `5e-5` conditioning gate.
+
+The complete native Flow velocity graph now passes the official CUDA-F32
+two-frame oracle at `t=0.5`. Timestep embeddings and modulation differ by at
+most `4.76837e-7`; block 0 by `8.70228e-6`; the complete 2200-wide output by
+`9.17912e-6`; and CFG-combined 64-wide velocity by `1.74046e-5`. Full-output
+and velocity cosine similarity exceed `0.99999999999`. The two semantic fixes
+identified by the staged capture were interleaved Q/K/V slice offsets and the
+AdaLN attention gate; both are now independently covered by the parity tool.
+
+The Flow renderer layer implements the exact uniform Euler schedule,
+classifier-free branches, sigma-min in-context interpolation and hard restore,
+1000-frame windows, 750-frame hops, and 250-frame continuation context. Its
+asset-free solver/window tests pass. A full 1000-frame one-step and official
+50-step token-to-WAV run remain release gates rather than assumed results.
