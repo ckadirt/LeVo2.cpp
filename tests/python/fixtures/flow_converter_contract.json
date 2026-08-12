@@ -1,0 +1,13 @@
+{
+  "checkpoint_tensor_count": 993,
+  "emitted_source_tensor_count": 233,
+  "emitted_tensor_count": 231,
+  "emitted_parameter_count": 663310785,
+  "omitted_source_tensor_count": 760,
+  "header_sha256": "0bd1b4f0a843babde4f2d2d114e318f169389ca90a1d82f85550b362981ddcfa",
+  "architecture": "levo2_flow",
+  "rvq_weight_norm_targets": [
+    "flow.rvq.vocal.out_proj.weight",
+    "flow.rvq.bgm.out_proj.weight"
+  ]
+}
