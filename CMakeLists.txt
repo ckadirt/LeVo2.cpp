@@ -38,6 +38,7 @@ add_library(levo-core STATIC
     src/levo-sampling.cpp
     src/levo-token-io.cpp
     src/levo-tokenizer.cpp
+    src/levo-vae-model.cpp
     src/levo-wav.cpp
     src/levo.cpp
     third_party/llama-unicode/unicode.cpp
