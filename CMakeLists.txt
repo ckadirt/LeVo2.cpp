@@ -27,6 +27,7 @@ add_subdirectory(ggml)
 find_package(Threads REQUIRED)
 
 add_library(levo-core STATIC
+    src/levo-audio-ops.cpp
     src/levo-conditioner.cpp
     src/levo-generator.cpp
     src/levo-kv.cpp
