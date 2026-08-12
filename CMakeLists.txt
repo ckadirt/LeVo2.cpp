@@ -32,6 +32,7 @@ add_library(levo-core STATIC
     src/levo-flow-conditioning.cpp
     src/levo-flow-estimator.cpp
     src/levo-flow-model.cpp
+    src/levo-flow-renderer.cpp
     src/levo-generator.cpp
     src/levo-kv.cpp
     src/levo-lm.cpp
