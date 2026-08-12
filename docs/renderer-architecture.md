@@ -59,15 +59,32 @@ The estimator is a noncausal GPT2-style transformer:
 | RoPE | adjacent-pair, theta 10000, Q and K |
 | Attention | bidirectional/noncausal with supplied in-context mask |
 
+The transformer always adds its learned `[1000,2200]` absolute position
+embedding, even though the model is called with input embeddings. Q and K also
+receive full-head adjacent-pair RoPE using the local window positions.
+
 Every block uses timestep-driven AdaLN-single shift, scale, and gate values for
-both attention and MLP. A final timestep shift/scale is applied after the final
-LayerNorm and before the 2200-wide output projection. Only the final 64
-channels are the velocity prediction.
+both attention and MLP. The timestep path starts with a 512-wide sinusoidal
+embedding scaled by 1000, followed by a `512 -> 2200 -> 2200` SiLU MLP and a
+`2200 -> 13200` modulation projection. A final timestep shift/scale is applied
+after the final LayerNorm and before the 2200-wide output projection. Only the
+final 64 channels are the velocity prediction.
 
 The solver starts from supplied Gaussian noise and uses 50 uniform Euler steps
 over `[0,1]`. At each step, in-context positions follow the official noisy
 interpolation, conditional and null batches are evaluated together, and
 velocity uses `uncond + 1.5 * (cond - uncond)`. The update is `x += dt * v`.
+The first correctness graph is explicitly F32. Production Python runs the Flow
+call under CUDA FP16 autocast, so autocast compatibility is a separate parity
+mode rather than an implicit change to the F32 oracle.
+
+The source Flow checkpoint contains 993 tensors. The native inference subset is
+approximately 2.653 GB (2.471 GiB) before minor weight-normalization folding:
+the 16-block estimator, its time/position/final tensors, both RVQ decoders,
+mask/null conditioning, and normalization statistics. Best-RQ, HuBERT, the
+training projection, `wte`, RVQ encoder projections, resampler kernels, and
+training state are unreachable from token rendering and are rejected unless
+classified as pinned omissions by the converter.
 
 ## Latent-to-audio VAE
 
@@ -77,15 +94,38 @@ is the Oobleck architecture configured with base width 128, channel multipliers
 tanh. The stride product is 1920, so one 25 Hz latent frame produces 1920
 stereo samples at 48 kHz.
 
+The exact decoder graph is:
+
+```text
+Conv1d(64 -> 2048, kernel 7, padding 3)
+
+SnakeBeta + ConvTranspose1d(2048 -> 1024, kernel 20, stride 10, padding 5)
+SnakeBeta + ConvTranspose1d(1024 ->  512, kernel 12, stride  6, padding 3)
+SnakeBeta + ConvTranspose1d( 512 ->  256, kernel  8, stride  4, padding 2)
+SnakeBeta + ConvTranspose1d( 256 ->  128, kernel  8, stride  4, padding 2)
+SnakeBeta + ConvTranspose1d( 128 ->  128, kernel  4, stride  2, padding 1)
+
+Each stage: 3 residual units with dilations 1, 3, 9
+Each unit:   SnakeBeta -> Conv1d(k7,d) -> SnakeBeta -> Conv1d(k1) + residual
+Output:      SnakeBeta -> Conv1d(128 -> 2, kernel 7, padding 3, no bias)
+```
+
+Stage lengths are exactly `T -> 10T -> 60T -> 240T -> 960T -> 1920T`.
+SnakeBeta stores log-domain parameters and computes
+`x + sin(x * exp(alpha_log))^2 / (exp(beta_log) + 1e-9)`.
+
 Only the decoder is reachable from generated tokens. The encoder, stochastic
 VAE encode path, discriminators, loss modules, and optimizer state are not part
 of native rendering. PyTorch weight-normalization `weight_g`/`weight_v` values
 are folded into ordinary convolution weights during deterministic conversion;
 C++ does not implement mutable weight-normalization state.
 
-The port must preserve the upstream reflection padding and output-length
-cropping around odd kernels and transposed convolutions. Full output length is
-an invariant checked at every VAE stage and at the final WAV boundary.
+The 182 raw decoder tensors fold to 145 reachable runtime tensors, about
+337.6 MB. All ordinary convolutions use zero padding. GGML's CUDA
+`conv_transpose_1d` path only accepts zero padding, so the initial correctness
+implementation performs the zero-padding transpose convolution and crops
+`ceil(stride/2)` samples symmetrically. Full output length is an invariant
+checked at every VAE stage and at the final WAV boundary.
 
 ## Memory lifetime
 

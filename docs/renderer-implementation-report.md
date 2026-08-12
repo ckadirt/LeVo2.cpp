@@ -22,3 +22,17 @@ The upstream checkpoint includes large training/encoding subgraphs that the
 token-to-WAV path never calls. The converter will classify every source tensor
 before runtime code is accepted, following the same strict-inventory discipline
 as the LeLM converter.
+
+## Source audit
+
+The initial read-only source audit fixed the native boundary before converter
+work:
+
+- Flow: 993 source tensors; approximately 2.471 GiB is reachable from token
+  rendering after training/audio-encoder omissions.
+- VAE: 365 checkpoint tensors, of which 182 belong to the decoder; folding 37
+  weight-normalized convolutions produces 145 runtime tensors.
+- VAE convolutions are zero padded. CUDA transpose-convolution padding will be
+  represented as a zero-padding operation followed by a symmetric crop.
+- Flow F32 correctness and official CUDA FP16-autocast compatibility are
+  explicitly distinct parity modes.

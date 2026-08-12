@@ -24,13 +24,18 @@ Flow fixtures freeze:
 VAE fixtures freeze:
 
 1. Weight-normalized convolution kernels after folding.
-2. Decoder input projection and every upsampling-stage output.
+2. Decoder input projection and the exact stage lengths
+   `T,10T,60T,240T,960T,1920T`.
 3. Selected residual/SnakeBeta outputs.
 4. Full 1-frame, short, 10.08-second, and 30-second stereo waveforms.
 
 Fixtures record shape, dtype, SHA-256, min/max/mean/RMS, and finite status. Raw
 arrays and audio stay ignored; small deterministic synthetic fixtures may be
 tracked.
+
+The first VAE stage fixture uses one or two latent frames rather than the full
+1000-frame window. This exercises every decoder operator while keeping the
+oracle reviewable. Full-window raw F32 waveform parity is a later CUDA gate.
 
 ## Threshold discipline
 
@@ -47,6 +52,19 @@ tracked.
 - Final stochastic WAV files are not required to be byte-identical across
   runtimes. Given identical stored initial noise, latent and waveform metrics
   must satisfy the frozen numerical gates.
+
+Initial target thresholds, subject only to evidence-backed tightening, are:
+
+| Boundary | F32 maximum error | Additional gate |
+| --- | ---: | --- |
+| RVQ/conditioning | `5e-5` | exact shape and token lookup |
+| Flow block 0 | `2e-3` | cosine `> 0.99999` |
+| Full velocity | `5e-3` | relative RMS `< 3e-3` |
+| Euler step 50 latent | `2e-2` | relative RMS `< 5e-3` |
+| VAE final waveform | `3e-3` | relative RMS `< 1e-3` |
+
+The production-autocast fixture has separate, looser thresholds and is never
+used to redefine the F32 contract.
 
 ## Required release cases
 

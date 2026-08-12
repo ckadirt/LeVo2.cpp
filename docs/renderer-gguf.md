@@ -15,7 +15,8 @@ inventory.
 
 ## Flow metadata and names
 
-Required metadata uses the `levo2.flow.*` namespace and records architecture
+`general.architecture` is `levo2_flow`. Required metadata uses the
+`levo2.flow.*` namespace and records architecture
 dimensions, CFG, sigma minimum, Euler steps, token/latent frame rates, window,
 hop, overlap, codebook size, source/runtime revisions, every input hash,
 converter version, tensor count, parameter count, and conversion dtype.
@@ -23,19 +24,20 @@ converter version, tensor count, parameter count, and conversion dtype.
 Canonical tensor families are:
 
 ```text
-flow.codebook.{vocal,bgm}.weight
-flow.codebook.{vocal,bgm}.output.{weight,bias}
-flow.condition.null
-flow.condition.mask.weight
-flow.latent_stats.{count,sum,sum_sq}
-flow.position.weight
-flow.time.in.{weight,bias}
-flow.time.out.{weight,bias}
-flow.time.modulation.{weight,bias}
-flow.blk.N.{attn_norm,attn_qkv,attn_output,ffn_norm,ffn_up,ffn_down}.*
-flow.blk.N.modulation
-flow.output_norm.{weight,bias}
-flow.output_modulation
+flow.rvq.{vocal,bgm}.codebook.weight
+flow.rvq.{vocal,bgm}.out_proj.{weight,bias}
+flow.mask_embedding.weight
+flow.null_condition.weight
+flow.norm.{counts,sum_x,sum_x2}
+flow.position_embedding.weight
+flow.time_embedding.linear_{1,2}.{weight,bias}
+flow.time_modulation.{weight,bias}
+flow.block.N.norm_{1,2}.{weight,bias}
+flow.block.N.attn.{qkv,out}.{weight,bias}
+flow.block.N.ffn.{in,out}.{weight,bias}
+flow.block.N.modulation.weight
+flow.final_norm.{weight,bias}
+flow.final_modulation.weight
 flow.output.{weight,bias}
 ```
 
@@ -45,7 +47,8 @@ encoder projections/stale counters, and any unused checkpoint tensors.
 
 ## VAE metadata and names
 
-Required metadata uses `levo2.vae.*` and records the decoder channel plan,
+`general.architecture` is `levo2_vae`. Required metadata uses `levo2.vae.*`
+and records the decoder channel plan,
 strides, latent width, stereo output width, 1920x ratio, sample rate, SnakeBeta
 mode, source/runtime revisions, config/checkpoint hashes, tensor inventory, and
 conversion dtype.
@@ -56,14 +59,14 @@ Canonical tensor families are:
 vae.decoder.input.{weight,bias}
 vae.decoder.stage.N.residual.M.{snake1,conv1,snake2,conv2}.*
 vae.decoder.stage.N.upsample.{weight,bias}
-vae.decoder.output.snake.*
-vae.decoder.output.conv.{weight,bias}
+vae.decoder.output.{snake,conv}.*
 ```
 
 Exact numeric indices are resolved from the instantiated pinned decoder and
 frozen in the converter tests. Converted convolution weights are already
-weight-normalized. The C++ loader rejects leftover `weight_g` or `weight_v`
-tensors.
+weight-normalized. Snake parameters end in `.alpha_log` and `.beta_log` to make
+their stored domain explicit. The C++ loader rejects leftover `weight_g` or
+`weight_v` tensors.
 
 ## Loader policy
 
