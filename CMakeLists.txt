@@ -89,6 +89,9 @@ if(LEVO_BUILD_PARITY_TOOLS)
     add_executable(levo-tokenizer-parity tools/levo-tokenizer-parity.cpp)
     target_link_libraries(levo-tokenizer-parity PRIVATE levo::core)
     target_include_directories(levo-tokenizer-parity PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    add_executable(levo-vae-parity tools/levo-vae-parity.cpp)
+    target_link_libraries(levo-vae-parity PRIVATE levo::core)
+    target_include_directories(levo-vae-parity PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 endif()
 
 set_target_properties(levo-core levo-cli PROPERTIES
