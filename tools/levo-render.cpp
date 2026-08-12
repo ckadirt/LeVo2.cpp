@@ -3,6 +3,7 @@
 #include <cmath>
 #include <cstdint>
 #include <exception>
+#include <fstream>
 #include <iostream>
 #include <limits>
 #include <stdexcept>
@@ -61,10 +62,26 @@ const char * stage_name(levo::render_stage stage) {
     return "unknown";
 }
 
+std::vector<float> read_noise_f32(const std::string & path) {
+    std::ifstream input(path, std::ios::binary | std::ios::ate);
+    if (!input) throw std::runtime_error("cannot open F32 noise file: " + path);
+    const std::streamoff bytes = input.tellg();
+    if (bytes <= 0 || bytes % static_cast<std::streamoff>(sizeof(float)) != 0) {
+        throw std::invalid_argument("F32 noise file size must be a positive multiple of four bytes");
+    }
+    const auto count = static_cast<std::size_t>(bytes / static_cast<std::streamoff>(sizeof(float)));
+    input.seekg(0, std::ios::beg);
+    std::vector<float> values(count);
+    input.read(reinterpret_cast<char *>(values.data()), bytes);
+    if (!input) throw std::runtime_error("cannot read complete F32 noise file: " + path);
+    return values;
+}
+
 void usage(const char * program) {
     std::cout << "Usage:\n  " << program
               << " tokens.npy --flow-model FLOW.gguf --vae-model VAE.gguf --output song.wav"
-              << " [--backend auto|cpu|cuda|gpu --device N --steps N --cfg X --seed N]\n";
+              << " [--backend auto|cpu|cuda|gpu --device N --steps N --cfg X --seed N]"
+              << " [--noise-f32 window-major-noise.f32]\n";
 }
 
 } // namespace
@@ -93,6 +110,7 @@ int main(int argc, char ** argv) {
             else if (option == "--steps") config.euler_steps = static_cast<std::size_t>(parse_u64(value(), "Euler steps"));
             else if (option == "--cfg") config.cfg_scale = parse_float(value(), "CFG scale");
             else if (option == "--seed") config.seed = parse_u64(value(), "seed");
+            else if (option == "--noise-f32") config.external_noise = read_noise_f32(value());
             else throw std::invalid_argument("unknown option '" + option + "'");
         }
         if (!flow || !vae || !output_present) throw std::invalid_argument("--flow-model, --vae-model, and --output are required");
