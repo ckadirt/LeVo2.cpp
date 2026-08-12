@@ -110,3 +110,9 @@ does not instantiate upstream Python model code.
 
 See [the execution plan](docs/plan.md), [architecture contract](docs/architecture.md),
 [parity policy](docs/parity.md), and [implementation report](docs/implementation_report.md).
+
+Native Flow/VAE rendering is the active post-v0.1 milestone. Its committed
+[execution plan](docs/renderer-plan.md),
+[architecture contract](docs/renderer-architecture.md),
+[GGUF contract](docs/renderer-gguf.md), and
+[parity policy](docs/renderer-parity.md) define that work before implementation.
