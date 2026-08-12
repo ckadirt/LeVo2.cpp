@@ -7,7 +7,7 @@ if(GGML_CUDA)
     set_tests_properties(backend-smoke-cuda PROPERTIES LABELS "cuda")
 endif()
 
-foreach(test_name IN ITEMS model lm kv conditioner generation pattern renderer-pattern sampling tokenizer token-io audio-ops vae-model wav)
+foreach(test_name IN ITEMS model lm kv conditioner generation pattern renderer-pattern sampling tokenizer token-io audio-ops vae-model vae wav)
     add_executable(test-${test_name} test-${test_name}.cpp)
     target_link_libraries(test-${test_name} PRIVATE levo::core)
     target_include_directories(test-${test_name} PRIVATE ${PROJECT_SOURCE_DIR}/src)
@@ -17,6 +17,11 @@ endforeach()
 if(GGML_CUDA)
     add_test(NAME audio-ops-cuda COMMAND test-audio-ops cuda)
     set_tests_properties(audio-ops-cuda PROPERTIES LABELS "cuda")
+endif()
+
+if(GGML_CUDA)
+    add_test(NAME vae-cuda COMMAND test-vae cuda)
+    set_tests_properties(vae-cuda PROPERTIES LABELS "cuda;renderer")
 endif()
 
 target_compile_definitions(test-tokenizer PRIVATE
