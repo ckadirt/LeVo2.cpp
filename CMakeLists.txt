@@ -34,6 +34,7 @@ add_library(levo-core STATIC
     src/levo-lm.cpp
     src/levo-model.cpp
     src/levo-pattern.cpp
+    src/levo-renderer-pattern.cpp
     src/levo-sampling.cpp
     src/levo-token-io.cpp
     src/levo-tokenizer.cpp
