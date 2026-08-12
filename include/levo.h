@@ -109,4 +109,77 @@ void write_generation_artifact(const std::filesystem::path & output_path,
                                const generation_result & result,
                                const generation_config & config);
 
+// Native renderer controls. Both model paths must point to the strict F32
+// correctness GGUF artifacts. `external_noise`, when supplied, is C-order
+// F32 [window_count, 1000, 64] and is the exact Flow reproducibility boundary.
+// Otherwise the renderer derives the same shape from `seed` using its stable
+// native Gaussian generator.
+struct render_config {
+    std::filesystem::path tokens_path;
+    std::filesystem::path flow_model_path;
+    std::filesystem::path vae_model_path;
+    backend_kind backend = backend_kind::auto_select;
+    int device_index = 0;
+    std::size_t euler_steps = 0;
+    float cfg_scale = 0.0F;
+    uint64_t seed = 0;
+    std::vector<float> external_noise;
+};
+
+enum class render_stage {
+    loading_tokens,
+    loading_flow,
+    generating_latents,
+    releasing_flow,
+    loading_vae,
+    decoding_window,
+    assembling_audio,
+    complete,
+};
+
+struct render_progress {
+    render_stage stage = render_stage::loading_tokens;
+    std::size_t completed_windows = 0;
+    std::size_t total_windows = 0;
+};
+
+using render_progress_callback = std::function<void(const render_progress &)>;
+
+struct render_provenance {
+    std::string backend_name;
+    std::string flow_model_name;
+    std::string flow_levo_revision;
+    std::string flow_model_sha256;
+    std::string flow_runtime_revision;
+    std::string vae_model_name;
+    std::string vae_checkpoint_sha256;
+    std::string vae_config_sha256;
+    std::string vae_levo_revision;
+    std::string vae_runtime_revision;
+    uint64_t seed = 0;
+    bool external_noise = false;
+};
+
+struct render_result {
+    // IEEE-F32-ready, frame-interleaved [left, right] samples at 48 kHz.
+    std::vector<float> interleaved_stereo;
+    std::size_t samples_per_channel = 0;
+    std::size_t source_frames = 0;
+    std::size_t rendered_windows = 0;
+    uint32_t sample_rate = 48000;
+    render_provenance provenance;
+};
+
+// Read canonical [3,T] int32 `tokens.npy`, run Flow then VAE on the selected
+// backend, and return the cropped stereo waveform. Flow weights are scoped and
+// released before VAE weights are loaded, so one backend need not hold both
+// checkpoints at once. F16 GGUFs are deliberately rejected in this parity
+// correctness path.
+render_result render_tokens_to_audio(const render_config & config,
+                                     render_progress_callback progress = {});
+
+// Write a render result as a 48 kHz two-channel IEEE-F32 RIFF/WAVE file.
+void write_render_wav(const std::filesystem::path & output_path,
+                      const render_result & result);
+
 } // namespace levo

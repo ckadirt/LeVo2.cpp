@@ -38,6 +38,7 @@ add_library(levo-core STATIC
     src/levo-lm.cpp
     src/levo-model.cpp
     src/levo-pattern.cpp
+    src/levo-render.cpp
     src/levo-renderer-pattern.cpp
     src/levo-sampling.cpp
     src/levo-token-io.cpp
@@ -79,6 +80,9 @@ endif()
 add_executable(levo-cli tools/levo-cli.cpp)
 target_link_libraries(levo-cli PRIVATE levo::core)
 
+add_executable(levo-render tools/levo-render.cpp)
+target_link_libraries(levo-render PRIVATE levo::core)
+
 if(LEVO_BUILD_PARITY_TOOLS)
     add_executable(levo-parity tools/levo-parity.cpp)
     target_link_libraries(levo-parity PRIVATE levo::core)
@@ -100,7 +104,7 @@ if(LEVO_BUILD_PARITY_TOOLS)
     target_include_directories(levo-flow-parity PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 endif()
 
-set_target_properties(levo-core levo-cli PROPERTIES
+set_target_properties(levo-core levo-cli levo-render PROPERTIES
     ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib"
     LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib"
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
