@@ -3,9 +3,10 @@
 Portable C++17/GGML inference for the LeVo 2 hierarchical audio language model.
 
 The v0.1 milestone generates three streams of LeVo audio tokens from lyrics and
-a style description. The pinned v2-medium F16 LeLM path is implemented and
-parity-checked. Audio rendering remains in the official Python decoder until a
-later milestone; the native Flow/VAE renderer is not part of this release.
+a style description; the pinned v2-medium F16 LeLM path is implemented and
+parity-checked. The v0.2 milestone adds the native Flow/VAE renderer, so tokens
+become a 48 kHz stereo waveform without Python. The official Python decoder
+remains available as the reference oracle.
 
 > **License:** academic, research, and education use only. Commercial and
 > production use are prohibited by the upstream SongGeneration terms.
@@ -75,10 +76,40 @@ and utf8proc NFC normalization, with the pinned tokenizer configuration
 embedded in GGUF. Its 10-case English, punctuation, whitespace, and Unicode
 conformance check passes against the official Transformers tokenizer.
 
+## Render tokens to audio natively
+
+`levo-render` turns the canonical token artifact into a 48 kHz stereo WAV using
+the native Flow transformer and Oobleck VAE decoder:
+
+```bash
+./build-cuda/bin/levo-render tokens.npy \
+  --flow-model LeVo2-v2-flow-F32.gguf \
+  --vae-model LeVo2-v2-vae-F32.gguf \
+  --output song.wav \
+  --backend cuda --steps 50 --cfg 1.5 --seed 1234
+```
+
+Both renderer GGUFs are published alongside the LeLM artifact in
+[`ckadirt/LeVo2-GGUF`](https://huggingface.co/ckadirt/LeVo2-GGUF). The renderer
+is F32 only: F16 execution is deferred until it passes its own precision gate,
+and F16 artifacts are rejected rather than silently downcast.
+
+`--steps 0` and `--cfg 0` select the checkpoint defaults (50 Euler steps,
+guidance 1.5). `--noise-f32` replaces the internal Gaussian draw with an
+explicit window-major `[windows, 1000, 64]` F32 blob, which is the exact
+reproducibility boundary shared with the Python oracle. Output is cropped to
+`frames * 1920` samples.
+
+On CUDA the renderer sets `NVIDIA_TF32_OVERRIDE=0` before initializing the
+backend, because GGML creates its cuBLAS handles with TF32 tensor-op math and a
+1000-frame Flow window would otherwise be computed with a 10-bit mantissa. An
+explicit environment value is never overwritten.
+
 ## Render tokens with official Python LeVo
 
-The v0.1 bridge invokes the released dual-stream Flow model and 48 kHz VAE; it
-does not reimplement the renderer:
+The bridge invokes the released dual-stream Flow model and 48 kHz VAE; it
+does not reimplement the renderer, and it is the oracle the native renderer is
+gated against:
 
 ```bash
 python python/decode_official.py tokens.npy \
@@ -111,8 +142,25 @@ does not instantiate upstream Python model code.
 See [the execution plan](docs/plan.md), [architecture contract](docs/architecture.md),
 [parity policy](docs/parity.md), and [implementation report](docs/implementation_report.md).
 
-Native Flow/VAE rendering is the active post-v0.1 milestone. Its committed
+The native renderer has its own
 [execution plan](docs/renderer-plan.md),
 [architecture contract](docs/renderer-architecture.md),
-[GGUF contract](docs/renderer-gguf.md), and
-[parity policy](docs/renderer-parity.md) define that work before implementation.
+[GGUF contract](docs/renderer-gguf.md),
+[parity policy](docs/renderer-parity.md), and
+[implementation report](docs/renderer-implementation-report.md).
+
+Every release case is gated against the pinned Python oracle from the same
+stored initial noise, comparing per-window latents, per-window decoded audio,
+and the assembled waveform. Reproduce it with the parity tools enabled:
+
+```bash
+cmake -S . -B build-cuda -DGGML_CUDA=ON -DLEVO_BUILD_PARITY_TOOLS=ON \
+  -DCMAKE_BUILD_TYPE=Release -DCMAKE_CUDA_ARCHITECTURES=89
+cmake --build build-cuda -j
+
+LEVO_RUN_NATIVE_RENDER_PARITY=1 \
+  LEVO_RENDER_PARITY_TOOL=build-cuda/levo-render-parity \
+  LEVO_FLOW_F32_GGUF=LeVo2-v2-flow-F32.gguf \
+  LEVO_VAE_F32_GGUF=LeVo2-v2-vae-F32.gguf \
+  python -m pytest -q tests/python/test_native_render_parity.py
+```

@@ -825,7 +825,10 @@ def _render_end_to_end(args: argparse.Namespace) -> None:
         import soundfile as sf
 
         args.wav_output.parent.mkdir(parents=True, exist_ok=True)
-        sf.write(str(args.wav_output), arrays["audio"][0].T, 48_000, subtype="FLOAT")
+        # The assembled renderer waveform is channel-major [2, samples]; the
+        # per-stage VAE capture keeps its batch axis, so only that one is
+        # indexed before transposing.
+        sf.write(str(args.wav_output), arrays["audio"].T, 48_000, subtype="FLOAT")
 
 
 def _load_latent(path: Path | None, *, frames: int, device: str, seed: int) -> tuple[Any, int | None]:

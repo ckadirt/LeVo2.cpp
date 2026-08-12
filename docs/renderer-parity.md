@@ -66,6 +66,26 @@ Initial target thresholds, subject only to evidence-backed tightening, are:
 The production-autocast fixture has separate, looser thresholds and is never
 used to redefine the F32 contract.
 
+## F32 means F32 on both sides
+
+Neither runtime computes true F32 on Ampere-class hardware by default, and both
+defaults are invisible at short sequence lengths:
+
+- Upstream GGML creates every cuBLAS handle with `CUBLAS_TF32_TENSOR_OP_MATH`
+  (`ggml/src/ggml-cuda/common.cuh`), so any F32 GEMM large enough to be
+  dispatched to cuBLAS is computed in TF32 with a 10-bit mantissa. Matrices as
+  small as the two-frame fixture never reach cuBLAS, so the gate passed while
+  the production path did not. The renderer sets `NVIDIA_TF32_OVERRIDE=0`
+  before backend initialization (`src/levo-cuda-precision.h`).
+- `torch.backends.cudnn.allow_tf32` defaults to `True`, so the official
+  decoder's convolutions ran in TF32 while the exporter advertised `float32`.
+  `python/export_renderer_oracles.py` now disables it for CUDA captures.
+
+A TF32 path is neither the F32 correctness mode nor the FP16-autocast mode, so
+it may not stand in for either. Both overrides refuse to replace an explicit
+environment value, and the asset-free `cuda-precision` test fails if the native
+F32 GEMM ever carries TF32-sized error again.
+
 ## Required release cases
 
 - A minimal valid token input that exercises one full 1000-frame Flow window.

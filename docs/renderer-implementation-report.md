@@ -2,10 +2,16 @@
 
 ## Status
 
-Native VAE inference and the Flow conditioning boundary are implemented. The
-remaining critical path is the 16-block Flow estimator, Euler integration, and
-the public tokens-to-WAV API. The v0.1 official Python decoder remains the
-released WAV path until every release gate in `renderer-plan.md` passes.
+The native renderer is complete and gated. Token-to-WAV rendering runs entirely
+in C++/GGML: dual RVQ conditioning, the 16-block Flow velocity transformer,
+classifier-free guidance, uniform Euler integration, 1000/750/250 window
+continuation, the five-stage Oobleck decoder, crossfade assembly, and the F32
+WAV writer. All four release cases of `renderer-parity.md` pass their frozen F32
+gates against the pinned Python oracle at both one and fifty Euler steps.
+
+The official Python decoder remains in the repository as the reference oracle,
+not as the production path. F16 renderer execution is still deferred until it
+passes its own precision gate; F16 GGUFs are rejected rather than downcast.
 
 ## Baseline
 
