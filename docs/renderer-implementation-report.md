@@ -47,6 +47,11 @@ work:
 | `78436bb` | VAE converter | 365 source tensors classified; 145 emitted |
 | `0b0b237` | Python oracles | Deterministic Flow/VAE intermediate capture |
 | `8900054` | GGML primitives | F32 Conv1d, padded ConvTranspose1d, SnakeBeta |
+| `d6b4b3a` | WAV output | Strict interleaved IEEE-F32 RIFF/WAVE writer |
+| `37ba221` | Renderer schedule | Repeat/crop, windows, Euler, CFG, crossfade |
+| `a27bca5` | VAE loader | Strict 145-tensor F32/F16 GGUF loader |
+| `90f3df1` | VAE decoder | Complete native five-stage Oobleck graph |
+| `6cb1308` | Flow loader | Strict 231-tensor F32/F16 GGUF loader |
 
 The strict Flow converter produced `LeVo2-v2-flow-F32.gguf` with 231 tensors,
 663,310,785 parameters, 2,653,259,456 bytes, and SHA-256
@@ -73,3 +78,15 @@ ctest --test-dir build-cuda -R 'audio-ops' --output-on-failure
 At this checkpoint the focused results are Flow converter 4/4, VAE converter
 4/4, renderer oracles 3/3 (including the official T=1 VAE), and native audio
 operators 1/1 CPU plus 2/2 in the CUDA build.
+
+The complete native T=1 Oobleck decoder now passes the same fixed official
+PyTorch oracle on both tested backends:
+
+| Backend | Maximum error | Relative RMS | Cosine |
+| --- | ---: | ---: | ---: |
+| CPU | `2.02447e-4` | `3.89340e-4` | `1.0` |
+| RTX 4090 CUDA | `1.81034e-4` | `4.04892e-4` | `1.0` |
+
+This is within the frozen F32 waveform gates (`3e-3` maximum error and `1e-3`
+relative RMS) without threshold changes. The local strict Flow and VAE loaders
+also loaded their complete 231- and 145-tensor F32 artifacts successfully.
