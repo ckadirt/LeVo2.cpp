@@ -1,0 +1,17 @@
+/build*/
+/.cache/
+/.venv/
+/artifacts/
+/models/
+/reference/
+*.gguf
+*.gguf.sha256
+*.pt
+*.pth
+*.safetensors
+*.npy
+*.wav
+*.flac
+.env
+__pycache__/
+*.py[cod]
