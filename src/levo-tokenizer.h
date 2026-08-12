@@ -20,6 +20,12 @@ public:
     // tokenizer.json contains model.vocab/model.merges and added_tokens.
     static ByteLevelBPETokenizer load_tokenizer_json(const std::string & tokenizer_json,
                                                      const std::string & tokenizer_config_json = {});
+    // Constructs directly from the self-contained GGUF tokenizer metadata.
+    static ByteLevelBPETokenizer load_embedded(
+        const std::vector<std::string> & tokens,
+        const std::vector<std::string> & merges,
+        const std::string & added_tokens_json,
+        const std::string & tokenizer_config_json = {});
 
     void add_special_token(const std::string & token, int64_t id = -1);
     std::vector<int64_t> encode(const std::string & text) const;

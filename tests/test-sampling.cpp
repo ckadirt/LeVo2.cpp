@@ -9,6 +9,10 @@ int main() {
     logits x{10, 8, 6};
     apply_unique_token_repetition_penalty(x, {0,0,1}, 2.0F);
     assert(x[0] == 5 && x[1] == 4 && x[2] == 6); // unique IDs, not frequencies
+    sampling_config config; config.use_sampling=false; config.repetition_penalty=2.0F;
+    Sampler upstream(0);
+    const auto sampled = upstream.sample_streams({{9,8,10}}, config, {{2}});
+    assert(sampled[0] == 2); // EOS (last logit) is not repetition-penalized
     Sampler a(1234), b(1234);
     for (int i=0;i<20;++i) assert(a.sample({0,1,2}, 3, 1, true) == b.sample({0,1,2}, 3, 1, true));
     assert(Sampler(1).sample({-1,3,-2}, 1, 1, true) == 1);

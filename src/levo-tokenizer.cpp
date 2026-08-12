@@ -105,6 +105,50 @@ ByteLevelBPETokenizer ByteLevelBPETokenizer::load_tokenizer_json(const std::stri
     return t;
 }
 
+ByteLevelBPETokenizer ByteLevelBPETokenizer::load_embedded(
+    const std::vector<std::string> & tokens,
+    const std::vector<std::string> & merges,
+    const std::string & added_tokens_json,
+    const std::string & tokenizer_config_json) {
+    if (tokens.empty() || merges.empty()) throw std::runtime_error("embedded tokenizer is empty");
+    ByteLevelBPETokenizer t;
+    t.id_to_token_ = tokens;
+    for (std::size_t id = 0; id < tokens.size(); ++id) {
+        if (tokens[id].empty() || !t.token_to_id_.emplace(tokens[id], static_cast<int64_t>(id)).second)
+            throw std::runtime_error("embedded tokenizer has an empty or duplicate token");
+    }
+    std::size_t rank = 0;
+    for (const std::string & merge : merges) {
+        std::istringstream stream(merge);
+        std::string first, second;
+        if (!(stream >> first >> second)) continue;
+        t.merge_rank_[first + "\n" + second] = rank++;
+    }
+    if (!added_tokens_json.empty()) {
+        const json added = json_reader(added_tokens_json).parse();
+        if (added.type != json::kind::array) throw std::runtime_error("embedded added tokens must be a JSON array");
+        for (const json & item : added.array) {
+            const json * id = get(item, "id");
+            const json * content = get(item, "content");
+            const json * special = get(item, "special");
+            if (id && content && id->type == json::kind::number && content->type == json::kind::string &&
+                (!special || (special->type == json::kind::boolean && special->boolean))) {
+                t.add_special_token(content->string, static_cast<int64_t>(id->number));
+            }
+        }
+    }
+    if (!tokenizer_config_json.empty()) {
+        const json cfg = json_reader(tokenizer_config_json).parse();
+        if (const json * added = get(cfg, "added_tokens_decoder"); added && added->type == json::kind::object) {
+            for (const auto & kv : added->object) {
+                if (const json * content = get(kv.second, "content"); content && content->type == json::kind::string)
+                    t.add_special_token(content->string, std::stoll(kv.first));
+            }
+        }
+    }
+    return t;
+}
+
 void ByteLevelBPETokenizer::ensure_id(std::size_t id) { if(id>=id_to_token_.size())id_to_token_.resize(id+1); }
 void ByteLevelBPETokenizer::load_vocab_object(const std::string & text) { const json root=json_reader(text).parse(); if(root.type!=json::kind::object)throw std::runtime_error("vocab JSON must be an object");for(const auto&kv:root.object){if(kv.second.type!=json::kind::number)throw std::runtime_error("invalid vocab ID");auto id=static_cast<int64_t>(kv.second.number);if(id<0)throw std::runtime_error("negative vocab ID");token_to_id_[kv.first]=id;ensure_id(static_cast<std::size_t>(id));id_to_token_[static_cast<std::size_t>(id)]=kv.first;} }
 void ByteLevelBPETokenizer::load_merges_text(const std::string & text) { std::istringstream ss(text);std::string line;std::size_t rank=0;while(std::getline(ss,line)){if(line.empty()||line[0]=='#')continue;std::istringstream ls(line);std::string a,b;if(ls>>a>>b)merge_rank_[a+"\n"+b]=rank++;} }

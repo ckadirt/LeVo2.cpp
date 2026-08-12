@@ -92,6 +92,34 @@ std::vector<int32_t> required_i32_array(const gguf_context * context, const char
     return {values, values + count};
 }
 
+std::vector<std::string> required_string_array(const gguf_context * context, const char * key) {
+    const int64_t index = required_key(context, key, GGUF_TYPE_ARRAY);
+    if (gguf_get_arr_type(context, index) != GGUF_TYPE_STRING) {
+        fail("metadata array " + quote(key) + " must contain strings");
+    }
+    const std::size_t count = gguf_get_arr_n(context, index);
+    std::vector<std::string> values;
+    values.reserve(count);
+    for (std::size_t i = 0; i < count; ++i) values.emplace_back(gguf_get_arr_str(context, index, i));
+    return values;
+}
+
+tokenizer_assets parse_tokenizer(const gguf_context * context) {
+    if (required_string(context, gguf_keys::tokenizer_model) != "gpt2") {
+        fail("tokenizer.ggml.model must be 'gpt2' for Qwen2 byte-level BPE");
+    }
+    tokenizer_assets result;
+    result.tokens = required_string_array(context, gguf_keys::tokenizer_tokens);
+    result.merges = required_string_array(context, gguf_keys::tokenizer_merges);
+    result.added_tokens_json = required_string(context, gguf_keys::tokenizer_added_json);
+    result.config_json = required_string(context, gguf_keys::tokenizer_config_json);
+    if (result.tokens.size() != 151659U || result.merges.empty() ||
+        result.added_tokens_json.empty() || result.config_json.empty()) {
+        fail("embedded Qwen2 tokenizer inventory is incomplete");
+    }
+    return result;
+}
+
 void expect_equal(const char * key, int32_t actual, int32_t expected) {
     if (actual != expected) {
         std::ostringstream message;
@@ -166,6 +194,26 @@ model_hparams parse_hparams(const gguf_context * context) {
 }
 
 void validate_v2_medium(const gguf_context * context, const model_hparams & hparams) {
+    const auto expect_string = [context](const char * key, const char * expected) {
+        const std::string actual = required_string(context, key);
+        if (actual != expected) {
+            fail("metadata " + quote(key) + " does not match the pinned v2-medium source");
+        }
+    };
+    expect_string(gguf_keys::source_model_repository, "lglg666/SongGeneration-v2-medium");
+    expect_string(gguf_keys::source_model_revision,
+                  "7d91660ebfa041e29bace194f5631e775796f600");
+    expect_string(gguf_keys::source_runtime_repository, "lglg666/SongGeneration-Runtime");
+    expect_string(gguf_keys::source_runtime_revision,
+                  "cc258cc694a63114c61684cc26d0583b8ad777d0");
+    expect_string(gguf_keys::tokenizer_revision,
+                  "cc258cc694a63114c61684cc26d0583b8ad777d0");
+    expect_string(gguf_keys::tokenizer_sha256,
+                  "f7c9b2dba4a296b1aa76c16a34b8225c0c118978400d4bb66bff0902d702f5b8");
+    expect_string(gguf_keys::source_model_sha256,
+                  "4ef2be41f6d838824f5432491408f68d9ffbeda3b1349e1208f9cdfcc64445b1");
+    expect_string(gguf_keys::source_config_sha256,
+                  "9b1e1cb79b9824816e9f119e1d3e1c3dbb91265121fdd4219667f8e0158a563f");
     const model_hparams expected;
     expect_equal(gguf_keys::main_layers, hparams.main_layers, expected.main_layers);
     expect_equal(gguf_keys::detail_layers, hparams.detail_layers, expected.detail_layers);
@@ -407,6 +455,8 @@ struct model::impl {
     context_ptr context;
     buffer_ptr buffer;
     std::unordered_map<std::string, ggml_tensor *> tensors;
+    tokenizer_assets tokenizer;
+    model_provenance provenance;
 };
 
 namespace tensor_names {
@@ -487,13 +537,26 @@ std::shared_ptr<model> model::load_gguf(const std::string & path, const model_lo
     }
     validate_tensor_file_bounds(gguf.get(), input_size);
     const model_hparams hparams = parse_hparams(gguf.get());
+    model_provenance provenance;
+    provenance.name = required_string(gguf.get(), gguf_keys::name);
+    provenance.model_sha256 = required_string(gguf.get(), gguf_keys::source_model_sha256);
+    tokenizer_assets tokenizer;
     if (options.require_v2_medium) {
+        provenance.model_repository = required_string(gguf.get(), gguf_keys::source_model_repository);
+        provenance.model_revision = required_string(gguf.get(), gguf_keys::source_model_revision);
+        provenance.runtime_repository = required_string(gguf.get(), gguf_keys::source_runtime_repository);
+        provenance.runtime_revision = required_string(gguf.get(), gguf_keys::source_runtime_revision);
+        provenance.tokenizer_revision = required_string(gguf.get(), gguf_keys::tokenizer_revision);
+        provenance.tokenizer_sha256 = required_string(gguf.get(), gguf_keys::tokenizer_sha256);
         validate_v2_medium(gguf.get(), hparams);
         validate_tensor_inventory(gguf.get(), hparams);
+        tokenizer = parse_tokenizer(gguf.get());
     }
 
     const auto result = std::shared_ptr<model>(new model());
     result->impl_->hparams = hparams;
+    result->impl_->tokenizer = std::move(tokenizer);
+    result->impl_->provenance = std::move(provenance);
     result->impl_->backend = options.backend;
     const int64_t tensor_count = gguf_get_n_tensors(gguf.get());
     if (static_cast<uint64_t>(tensor_count) > std::numeric_limits<std::size_t>::max() / ggml_tensor_overhead()) {
@@ -596,5 +659,7 @@ bool model::contains(const std::string & name) const noexcept {
 }
 
 std::size_t model::tensor_count() const noexcept { return impl_->tensors.size(); }
+const tokenizer_assets & model::tokenizer() const noexcept { return impl_->tokenizer; }
+const model_provenance & model::provenance() const noexcept { return impl_->provenance; }
 
 } // namespace levo::detail

@@ -2,9 +2,12 @@
 
 ## Status
 
-The build foundation, strict GGUF converter/loader, uncached hierarchical LeLM
-graph, tokenizer, delayed pattern, and sampling primitives are implemented.
-KV-cached conditioning and generation are the next milestone.
+The v0.1 implementation is feature-complete: strict GGUF conversion/loading,
+embedded Qwen2 conditioning, both hierarchical LeLM towers, persistent KV
+caches, delayed generation, canonical NPY/JSON artifacts, and the official
+Python Flow/VAE decoder bridge are implemented. The real-F16 numerical and
+exact-greedy parity gates pass with the parity-safe CUDA compute mode described
+below.
 
 ## Environment baseline
 
@@ -61,10 +64,11 @@ KV-cached conditioning and generation are the next milestone.
   `4ef2be41f6d838824f5432491408f68d9ffbeda3b1349e1208f9cdfcc64445b1`.
 - Classified all 386 checkpoint tensors: 380 runtime-reachable tensors are
   emitted and six explicitly documented unused tensors are omitted.
-- A real F16 conversion produced 2,728,912,896 parameters in a 5.1 GiB GGUF.
-  Reader validation and the artifact SHA-256 sidecar passed. This pre-release
-  artifact will be regenerated after the final metadata/runtime contract is
-  frozen; it has not been uploaded.
+- The frozen F16 conversion produced 2,728,912,896 parameters in a
+  5,467,925,728-byte GGUF. Strict CUDA loading and its SHA-256 sidecar passed;
+  SHA-256 is
+  `b765d0e79f17cf05c0acdc6cef8bfcd072104adfd8357bb0470f5b9ae91d9e64`.
+  The staged artifact passes the strict loader and release parity gates.
 - Added deterministic JSON manifests, source/tokenizer provenance and hashes,
   F16/F32 output, shape/type validation, and synthetic converter tests.
 - Added a strict C++ schema-1 loader that rejects wrong metadata, unknown or
@@ -79,9 +83,66 @@ KV-cached conditioning and generation are the next milestone.
   detail layers, conditional/unconditional/CFG logits, and initial greedy IDs
   `[12794, 7883, 12301]`. Large oracle arrays remain ignored.
 
+### Conditioning, caching, generation, and decoder
+
+- Embedded the full Qwen2 byte-level BPE inventory and JSON configuration in
+  GGUF; generation has no external tokenizer path.
+- Reproduced all four fixed `[952,1536]` conditional/null main/detail prefix
+  tensors exactly against official Python (`max_abs_error = 0`).
+- Added persistent backend-resident K/V caches for both towers and separate
+  conditional/null sessions, including prefix prefill, one-token decode, reset,
+  context validation, and optional FP16 activation-boundary diagnostics.
+- Added the public C++ generator and `levo-cli` interface, exact `[0,250,250]`
+  delayed scatter/revert behavior, CFG, upstream repetition logic, sampling,
+  per-stream EOS state, earliest-EOS trim, progress reporting, and self-validating
+  int32 `[3,T]` NPY/JSON output.
+- CPU CTest is 10/10; the CUDA suite adds a real RTX 4090 backend test and is
+  11/11. Python lightweight tests are 4 passed with the heavyweight decoder
+  test skipped by default.
+- A real two-frame greedy C++ CUDA smoke completed in 15.44 seconds and wrote
+  valid tokens. The 250-frame delay makes even short requests execute 252
+  delayed steps.
+- The same C++ artifact passed the official released `Flow1dVAESeparate` and
+  48 kHz VAE renderer at both the one-step test setting and the production
+  50-step default. Output was stereo, finite, non-silent, and exactly 0.08 s.
+- The decode-only pinned runtime subset is about 5.2 GiB: the 4.81 GB
+  `model_septoken/model_2.safetensors`, 675 MB VAE checkpoint/config, and the
+  required upstream `stable_audio_tools`/Demucs import sources. No encoder,
+  ContentVec, mixed renderer, or Demucs weights are required.
+- A complete sampled 30-second generation using seed 1234 finished in 35.74 s,
+  produced a valid `[3,750]` tensor with no EOS/special IDs, and used at most
+  10,332 MiB GPU memory in polling. The production 50-step official decoder
+  finished in 30.41 s and peaked at 13,918 MiB. Its WAV is exactly
+  `(1,440,000,2)` at 48 kHz, finite, non-silent (RMS `0.29216`), and 30.0 s.
+
+### Real-F16 parity gate
+
+- Direct F16 GGML/PyTorch conditioning input is exact, and an unconditioned
+  promoted-F32 graph check has cosine similarity above `0.999998` with exact
+  greedy IDs, ruling out tensor-map, tower-order, RoPE-layout, and head-layout
+  errors.
+- Operator-level tracing localized the original first-token mismatch to the
+  first F16 Q/K/V cuBLAS GEMM: the conditioned input and RMSNorm were exact,
+  while GGML's default F16 accumulation produced Q/K/V maximum errors of
+  `0.00977`, `0.02344`, and `0.02344`. RoPE and attention masking were therefore
+  ruled out as the first cause.
+- The official PyTorch path uses FP32 accumulation for these F16 GEMMs. GGML's
+  upstream `GGML_CUDA_CUBLAS_COMPUTE_TYPE=f32` path matches that behavior; the
+  public generator now selects it by default on CUDA unless the caller has
+  explicitly set the variable.
+- With FP32 accumulation, both the combined condition+BOS path and the split
+  prefix/KV-decode path produce the exact official greedy IDs
+  `[12794, 7883, 12301]`. Combined-path CFG logit maximum errors are `0.02539`,
+  `0.06641`, and `0.07422`; cosine similarities are `0.99999784`, `0.99999699`,
+  and `0.99999630`. The streaming path also passes, with maximum errors
+  `0.02539`, `0.06836`, and `0.07031` and cosine similarities at least
+  `0.99999583`.
+- This is an official GGML runtime switch, not a local GGML patch. The frozen
+  thresholds were not changed, and the final greedy equality gate passes.
+
 ## Deviations from plan
 
-None. The released checkpoint has a pre-existing style-conditioner packaging
+The released checkpoint has a pre-existing style-conditioner packaging
 inconsistency: its embedding has 151652 rows while Qwen2 addresses 151646 base
 IDs. The converter preserves the six unreachable tail rows and the Python
 oracle repairs the released module shape before strict loading. This is an
@@ -93,3 +154,4 @@ upstream input defect, not a C++ behavior change.
   path only.
 - Audio prompt encoding, native audio rendering, quantization, stable C ABI, and
   mobile integration are intentionally deferred.
+- The official Python decoder remains required for WAV output in v0.1.

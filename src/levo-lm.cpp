@@ -126,7 +126,22 @@ tower_weights load_tower_weights(const model & model, bool detail) {
 
 ggml_tensor * rms_norm_weighted(ggml_context * context, ggml_tensor * input,
                                 ggml_tensor * weight, float epsilon) {
-    return ggml_mul(context, ggml_rms_norm(context, input, epsilon), weight);
+    ggml_tensor * normalized = ggml_rms_norm(context, input, epsilon);
+    // GGUF F16 mirrors the released weights, while GGML's activation path is
+    // F32. CUDA broadcast kernels require matching element widths.
+    if (weight->type != normalized->type) weight = ggml_cast(context, weight, normalized->type);
+    return ggml_mul(context, normalized, weight);
+}
+
+ggml_tensor * add_bias(ggml_context * context, ggml_tensor * input, ggml_tensor * bias) {
+    if (bias->type != input->type) bias = ggml_cast(context, bias, input->type);
+    return ggml_add(context, input, bias);
+}
+
+ggml_tensor * round_f16_if_model(ggml_context * context, ggml_tensor * input,
+                                 const ggml_tensor * model_tensor) {
+    if (model_tensor->type != GGML_TYPE_F16) return input;
+    return ggml_cast(context, ggml_cast(context, input, GGML_TYPE_F16), GGML_TYPE_F32);
 }
 
 ggml_tensor * llama_tower(ggml_context * context, ggml_tensor * input, ggml_tensor * positions,
@@ -327,13 +342,16 @@ lm_output lm::forward(const lm_input & input) const {
     ggml_tensor * detail_embedding = ggml_add(
         context.get(), ggml_get_rows(context.get(), impl_->vocal_embedding, vocal_ids),
         ggml_get_rows(context.get(), impl_->bgm_embedding, bgm_ids));
+    detail_embedding = round_f16_if_model(context.get(), detail_embedding, impl_->vocal_embedding);
     ggml_tensor * detail_input = ggml_concat(context.get(), detail_embedding, main_hidden, 0);
-    detail_input = ggml_add(context.get(), ggml_mul_mat(context.get(), impl_->bridge_0_weight, detail_input),
+    detail_input = add_bias(context.get(),
+                            ggml_mul_mat(context.get(), impl_->bridge_0_weight, detail_input),
                             impl_->bridge_0_bias);
     // torch.nn.GELU defaults to the exact erf formulation; ggml_gelu is the
     // tanh approximation and would create a persistent bridge-parity error.
     detail_input = ggml_gelu_erf(context.get(), detail_input);
-    detail_input = ggml_add(context.get(), ggml_mul_mat(context.get(), impl_->bridge_2_weight, detail_input),
+    detail_input = add_bias(context.get(),
+                            ggml_mul_mat(context.get(), impl_->bridge_2_weight, detail_input),
                             impl_->bridge_2_bias);
     ggml_tensor * detail_hidden = llama_tower(context.get(), detail_input, positions, impl_->detail, hparams,
                                               hparams.detail_rope_theta);

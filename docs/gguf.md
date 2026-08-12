@@ -24,10 +24,12 @@ The schema-1 spellings and types are frozen as follows:
 | `levo2.schema_version` | uint32 | `1` |
 | `levo2.converter`, `levo2.converter.version` | string | Converter identity/version |
 | `levo2.source.model_repository`, `levo2.source.model_revision` | string | Pinned checkpoint source |
+| `levo2.source.runtime_repository`, `levo2.source.runtime_revision` | string | Pinned Python decoder/runtime source |
 | `levo2.source.levo_repository`, `levo2.source.levo_revision` | string | Pinned Python implementation |
 | `levo2.source.ggml_repository`, `levo2.source.ggml_revision` | string | Pinned GGML implementation |
 | `levo2.source.model_sha256`, `levo2.source.config_sha256` | string | Source object hashes |
 | `levo2.tokenizer.assets_sha256.json` | string | Canonical JSON asset/hash map |
+| `levo2.tokenizer.revision`, `levo2.tokenizer.sha256` | string | Pinned tokenizer revision and primary `tokenizer.json` hash |
 
 Architecture metadata uses the following `levo2.*` keys:
 

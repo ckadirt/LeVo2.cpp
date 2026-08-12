@@ -11,6 +11,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 option(LEVO_BUILD_TESTS "Build LeVo2.cpp tests" ON)
+option(LEVO_BUILD_PARITY_TOOLS "Build local real-model parity tools" OFF)
 
 set(GGML_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(GGML_BUILD_TESTS OFF CACHE BOOL "" FORCE)
@@ -26,10 +27,14 @@ add_subdirectory(ggml)
 find_package(Threads REQUIRED)
 
 add_library(levo-core STATIC
+    src/levo-conditioner.cpp
+    src/levo-generator.cpp
+    src/levo-kv.cpp
     src/levo-lm.cpp
     src/levo-model.cpp
     src/levo-pattern.cpp
     src/levo-sampling.cpp
+    src/levo-token-io.cpp
     src/levo-tokenizer.cpp
     src/levo.cpp
 )
@@ -59,6 +64,18 @@ endif()
 
 add_executable(levo-cli tools/levo-cli.cpp)
 target_link_libraries(levo-cli PRIVATE levo::core)
+
+if(LEVO_BUILD_PARITY_TOOLS)
+    add_executable(levo-parity tools/levo-parity.cpp)
+    target_link_libraries(levo-parity PRIVATE levo::core)
+    target_include_directories(levo-parity PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    add_executable(levo-condition-parity tools/levo-condition-parity.cpp)
+    target_link_libraries(levo-condition-parity PRIVATE levo::core)
+    target_include_directories(levo-condition-parity PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    add_executable(levo-cfg-parity tools/levo-cfg-parity.cpp)
+    target_link_libraries(levo-cfg-parity PRIVATE levo::core)
+    target_include_directories(levo-cfg-parity PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+endif()
 
 set_target_properties(levo-core levo-cli PROPERTIES
     ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib"

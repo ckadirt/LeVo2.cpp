@@ -7,7 +7,7 @@ if(GGML_CUDA)
     set_tests_properties(backend-smoke-cuda PROPERTIES LABELS "cuda")
 endif()
 
-foreach(test_name IN ITEMS model lm pattern sampling tokenizer)
+foreach(test_name IN ITEMS model lm kv conditioner generation pattern sampling tokenizer token-io)
     add_executable(test-${test_name} test-${test_name}.cpp)
     target_link_libraries(test-${test_name} PRIVATE levo::core)
     target_include_directories(test-${test_name} PRIVATE ${PROJECT_SOURCE_DIR}/src)
@@ -15,4 +15,6 @@ foreach(test_name IN ITEMS model lm pattern sampling tokenizer)
 endforeach()
 
 target_compile_definitions(test-tokenizer PRIVATE
+    LEVO_TEST_FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures")
+target_compile_definitions(test-conditioner PRIVATE
     LEVO_TEST_FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures")

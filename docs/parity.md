@@ -53,3 +53,12 @@ before/after metrics.
 
 CI runs CPU builds and synthetic fixtures without model credentials. Real-model
 and CUDA gates run locally on the provisioned RTX 4090 before release.
+
+## CUDA accumulation contract
+
+The F16 checkpoint retains F16 storage and activation boundaries, but its
+matrix multiplications must accumulate in FP32 to reproduce the pinned PyTorch
+oracle. The public generator sets GGML's upstream
+`GGML_CUDA_CUBLAS_COMPUTE_TYPE=f32` mode on CUDA when the caller has not already
+set it. An explicit environment value remains an advanced override and may not
+satisfy the release parity gates.

@@ -30,6 +30,21 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--description", default="")
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--device", default="cuda")
+    parser.add_argument(
+        "--separate-branches",
+        action="store_true",
+        help="diagnostic: run conditional and null CFG branches as separate batch-1 forwards",
+    )
+    parser.add_argument(
+        "--single-branch",
+        choices=("conditional", "null"),
+        help="diagnostic: export one batch-1 branch (avoids retaining both prefill graphs)",
+    )
+    parser.add_argument(
+        "--streaming-first-token",
+        action="store_true",
+        help="match generate(): prefix-only prefill, then all-special delayed BOS decode",
+    )
     return parser.parse_args()
 
 
@@ -73,14 +88,52 @@ def main() -> None:
             audio_qt_emb=prompt,
             prepare_null_condition=True,
         )
-        sequence = torch.full(
-            (2, 3, 1),
-            model.special_token_id,
-            dtype=torch.long,
-            device=args.device,
-        )
-        all_logits = model(sequence, condition_tensors=condition)
-        cond_logits, uncond_logits = all_logits.chunk(2, dim=0)
+        if args.streaming_first_token:
+            if args.single_branch or args.separate_branches:
+                raise ValueError("--streaming-first-token cannot be combined with branch diagnostics")
+            empty = torch.empty((2, 3, 0), dtype=torch.long, device=args.device)
+            sequence = torch.full(
+                (2, 3, 1), model.special_token_id, dtype=torch.long, device=args.device
+            )
+            with model.streaming():
+                model(empty, condition_tensors=condition)
+                all_logits = model(sequence, condition_tensors=condition)
+            cond_logits, uncond_logits = all_logits.chunk(2, dim=0)
+        elif args.single_branch:
+            sequence = torch.full(
+                (1, 3, 1), model.special_token_id, dtype=torch.long, device=args.device
+            )
+            selected = 0 if args.single_branch == "conditional" else 1
+            selected_condition = {
+                name: tuple(value[selected : selected + 1] for value in values)
+                for name, values in condition.items()
+            }
+            selected_logits = model(sequence, condition_tensors=selected_condition)
+            cond_logits = selected_logits if selected == 0 else torch.zeros_like(selected_logits)
+            uncond_logits = selected_logits if selected == 1 else torch.zeros_like(selected_logits)
+        elif args.separate_branches:
+            sequence = torch.full(
+                (1, 3, 1), model.special_token_id, dtype=torch.long, device=args.device
+            )
+            cond_condition = {
+                name: tuple(value[:1] for value in values)
+                for name, values in condition.items()
+            }
+            null_condition = {
+                name: tuple(value[1:2] for value in values)
+                for name, values in condition.items()
+            }
+            cond_logits = model(sequence, condition_tensors=cond_condition)[:, :, -1:].clone()
+            uncond_logits = model(sequence, condition_tensors=null_condition)[:, :, -1:].clone()
+        else:
+            sequence = torch.full(
+                (2, 3, 1),
+                model.special_token_id,
+                dtype=torch.long,
+                device=args.device,
+            )
+            all_logits = model(sequence, condition_tensors=condition)
+            cond_logits, uncond_logits = all_logits.chunk(2, dim=0)
         cfg_logits = uncond_logits + 1.5 * (cond_logits - uncond_logits)
 
     for hook in hooks:
@@ -103,6 +156,9 @@ def main() -> None:
         "runtime_revision": RUNTIME_REVISION,
         "torch_version": torch.__version__,
         "device": str(args.device),
+        "separate_branches": args.separate_branches,
+        "single_branch": args.single_branch,
+        "streaming_first_token": args.streaming_first_token,
         "lyrics_sha256": text_hash(args.lyrics),
         "description_sha256": text_hash(args.description),
         "arrays": {

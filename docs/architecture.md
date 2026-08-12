@@ -78,9 +78,11 @@ tag through the next structure boundary. Style uses a different learned token
 embedding and no structure embedding.
 
 v0.1 has no audio-prompt input, but it must still construct the learned null
-prompt condition. Its three 250-frame streams are filled with 16385; an EOS code
-is inserted before each prompt stream and the conditioner prepends its learned
-EOT embeddings. The CFG-null prefix uses empty text and length-zero null audio.
+prompt condition. Its three 250-frame streams are filled with 16385. Upstream
+temporarily prepends EOS, then its all-special first-frame mask overwrites that
+EOS and the complete stream with 16385; the learned EOT embeddings are prepended
+separately. The CFG-null branch still has the same fixed 952 positions, formed
+from empty text, all-special prompt audio, and empty style text.
 
 Condition padding masks are calculated upstream but not passed to either Llama
 tower. All fixed prefix positions therefore participate in causal attention and
@@ -88,16 +90,17 @@ must not be removed or masked in C++.
 
 ## Streaming and KV caches
 
-Classifier-free guidance is evaluated as a batch of two:
+Classifier-free guidance conceptually evaluates two branches:
 
 1. Fully conditional prefix.
 2. Fully null-conditioned prefix.
 
-Both main and detail towers have independent per-layer K/V caches for both batch
-members. Positions are continuous across the 952 condition positions and the
-delayed audio pattern. The first model call processes the full condition prefix
-plus the initial all-special sequence slot. Later calls process one delayed
-sequence position at a time.
+C++ uses one KV session per branch. Each session has independent main/detail
+per-layer K/V caches; together they are equivalent to upstream's batch of two.
+Positions are continuous across the 952 condition positions and the delayed
+audio pattern. The first model call processes the full condition prefix plus
+the initial all-special sequence slot. Later calls process one delayed sequence
+position at a time.
 
 For `T = floor(duration_seconds * 25)`, the delayed pattern contains `T + 251`
 sequence positions including the initial empty slot. At the maximum 270 seconds,

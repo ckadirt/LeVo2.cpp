@@ -4,6 +4,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <string>
 #include <vector>
 
 namespace levo::detail {
@@ -24,6 +25,20 @@ struct lm_output {
     std::vector<float> mixed_logits;
     std::vector<float> vocal_logits;
     std::vector<float> bgm_logits;
+    // Optional parity trace. Production calls leave these empty.
+    std::vector<std::vector<float>> main_layers;
+    std::vector<float> main_norm;
+    std::vector<float> bridge;
+    std::vector<std::vector<float>> detail_layers;
+    std::vector<float> detail_norm;
+    // Fine-grained first-main-layer trace used only by the parity diagnostic
+    // executable.  Each entry is a flattened F32 tensor with its stable
+    // operator name; normal inference never populates this vector.
+    struct named_trace {
+        std::string name;
+        std::vector<float> values;
+    };
+    std::vector<named_trace> main_layer0_ops;
 };
 
 // Uncached, reusable Llama forward runner for both LeLM towers.  It accepts

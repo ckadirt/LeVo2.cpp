@@ -113,7 +113,8 @@ std::vector<int64_t> Sampler::sample_streams(const std::vector<logits> & streams
             const std::size_t begin = recent[q].size() > config.repetition_window ? recent[q].size() - config.repetition_window : 0;
             apply_unique_token_repetition_penalty(adjusted,
                 std::vector<int64_t>(recent[q].begin() + static_cast<std::ptrdiff_t>(begin), recent[q].end()),
-                config.repetition_penalty);
+                config.repetition_penalty,
+                adjusted.empty() ? 0 : adjusted.size() - 1); // exclude EOS exactly as upstream
         }
         // Upstream applies prompt-token exclusion only to the mixed stream;
         // detail streams use top-k=1 without that ignore list.

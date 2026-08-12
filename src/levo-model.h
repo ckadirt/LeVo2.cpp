@@ -23,6 +23,10 @@ inline constexpr const char source_repository[] = "general.source.repo_url";
 inline constexpr const char converter[] = "levo2.converter";
 inline constexpr const char source_model_sha256[] = "levo2.source.model_sha256";
 inline constexpr const char source_config_sha256[] = "levo2.source.config_sha256";
+inline constexpr const char source_model_repository[] = "levo2.source.model_repository";
+inline constexpr const char source_model_revision[] = "levo2.source.model_revision";
+inline constexpr const char source_runtime_repository[] = "levo2.source.runtime_repository";
+inline constexpr const char source_runtime_revision[] = "levo2.source.runtime_revision";
 inline constexpr const char main_layers[] = "levo2.main.block_count";
 inline constexpr const char detail_layers[] = "levo2.detail.block_count";
 inline constexpr const char embedding_length[] = "levo2.embedding_length";
@@ -43,6 +47,13 @@ inline constexpr const char delays[] = "levo2.pattern.delays";
 inline constexpr const char lyrics_prefix_length[] = "levo2.condition.lyrics_prefix_length";
 inline constexpr const char prompt_prefix_length[] = "levo2.condition.prompt_prefix_length";
 inline constexpr const char style_prefix_length[] = "levo2.condition.style_prefix_length";
+inline constexpr const char tokenizer_model[] = "tokenizer.ggml.model";
+inline constexpr const char tokenizer_tokens[] = "tokenizer.ggml.tokens";
+inline constexpr const char tokenizer_merges[] = "tokenizer.ggml.merges";
+inline constexpr const char tokenizer_added_json[] = "levo2.tokenizer.added_tokens.json";
+inline constexpr const char tokenizer_config_json[] = "levo2.tokenizer.config.json";
+inline constexpr const char tokenizer_revision[] = "levo2.tokenizer.revision";
+inline constexpr const char tokenizer_sha256[] = "levo2.tokenizer.sha256";
 } // namespace gguf_keys
 
 namespace tensor_names {
@@ -62,6 +73,24 @@ inline constexpr const char bridge_2_bias[] = "bridge.2.bias";
 std::string main_layer(unsigned layer, const char * suffix);
 std::string detail_layer(unsigned layer, const char * suffix);
 } // namespace tensor_names
+
+struct tokenizer_assets {
+    std::vector<std::string> tokens;
+    std::vector<std::string> merges;
+    std::string added_tokens_json;
+    std::string config_json;
+};
+
+struct model_provenance {
+    std::string name;
+    std::string model_repository;
+    std::string model_revision;
+    std::string model_sha256;
+    std::string runtime_repository;
+    std::string runtime_revision;
+    std::string tokenizer_revision;
+    std::string tokenizer_sha256;
+};
 
 struct model_hparams {
     int32_t main_layers = 28;
@@ -130,6 +159,8 @@ public:
     [[nodiscard]] ggml_tensor * tensor(const std::string & name) const;
     [[nodiscard]] bool contains(const std::string & name) const noexcept;
     [[nodiscard]] std::size_t tensor_count() const noexcept;
+    [[nodiscard]] const tokenizer_assets & tokenizer() const noexcept;
+    [[nodiscard]] const model_provenance & provenance() const noexcept;
 
 private:
     model();

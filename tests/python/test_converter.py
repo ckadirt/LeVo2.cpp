@@ -50,4 +50,15 @@ def test_synthetic_f16_artifact_is_deterministic(tmp_path: Path) -> None:
     conv.convert(model, tok, second, dtype="F16", dry_run=False, strict_shapes=False)
     assert first.read_bytes() == second.read_bytes()
     assert first.with_suffix(".gguf.sha256").read_text().split()[0] == conv._sha256(first)
-    assert first.with_suffix(".gguf.manifest.json").exists()
+    manifest = json.loads(first.with_suffix(".gguf.manifest.json").read_text())
+    assert manifest["runtime"] == {
+        "repository": "lglg666/SongGeneration-Runtime",
+        "revision": conv.RUNTIME_REVISION,
+    }
+    assert manifest["tokenizer"]["revision"] == conv.RUNTIME_REVISION
+    assert manifest["tokenizer"]["primary_sha256"] == manifest["tokenizer"]["assets"]["tokenizer.json"]
+
+    from gguf import GGUFReader
+
+    reader = GGUFReader(str(first))
+    assert reader.fields["levo2.source.runtime_revision"].parts[-1].tobytes().decode() == conv.RUNTIME_REVISION

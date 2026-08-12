@@ -22,6 +22,8 @@ ROOT = Path(__file__).resolve().parents[1]
 
 MODEL_REPO = "lglg666/SongGeneration-v2-medium"
 MODEL_REVISION = "7d91660ebfa041e29bace194f5631e775796f600"
+RUNTIME_REPO = "lglg666/SongGeneration-Runtime"
+RUNTIME_REVISION = "cc258cc694a63114c61684cc26d0583b8ad777d0"
 LEVO_REVISION = "653cbcf4716101834900c75b7d5da43b07e15d5b"
 GGML_REVISION = "8846b79e66747bb9f68597420e95114c177315ce"
 CONVERTER_VERSION = "1"
@@ -264,6 +266,8 @@ def _add_metadata(writer: Any, tok: dict[str, Any], source_hash: str, config_has
     writer.add_uint32("levo2.schema_version", SCHEMA_VERSION)
     writer.add_string("levo2.source.model_repository", MODEL_REPO)
     writer.add_string("levo2.source.model_revision", MODEL_REVISION)
+    writer.add_string("levo2.source.runtime_repository", RUNTIME_REPO)
+    writer.add_string("levo2.source.runtime_revision", RUNTIME_REVISION)
     writer.add_string("levo2.source.levo_repository", "https://github.com/levo-demo/LeVo")
     writer.add_string("levo2.source.levo_revision", LEVO_REVISION)
     writer.add_string("levo2.source.ggml_repository", "https://github.com/ggml-org/ggml")
@@ -285,6 +289,8 @@ def _add_metadata(writer: Any, tok: dict[str, Any], source_hash: str, config_has
     writer.add_string("levo2.tokenizer.special_tokens.json", json.dumps(tok["special_tokens"], ensure_ascii=False, sort_keys=True, separators=(",", ":")))
     writer.add_string("levo2.tokenizer.config.json", json.dumps(tok["tokenizer_config"], ensure_ascii=False, sort_keys=True, separators=(",", ":")))
     writer.add_uint32("levo2.tokenizer.vocab_size", len(tok["tokens"]))
+    writer.add_string("levo2.tokenizer.revision", RUNTIME_REVISION)
+    writer.add_string("levo2.tokenizer.sha256", tok["hashes"]["tokenizer.json"])
     writer.add_string("levo2.source.model_sha256", source_hash)
     writer.add_string("levo2.source.config_sha256", config_hash or "")
     writer.add_string("levo2.tokenizer.assets_sha256.json", json.dumps(tok["hashes"], sort_keys=True, separators=(",", ":")))
@@ -316,7 +322,10 @@ def convert(model_path: Path, tokenizer_dir: Path, output: Path, *, dtype: str =
             mapping.append({"source": source, "target": rule.target, "shape": list(tensors[rule.target].shape)})
     manifest: dict[str, Any] = {"converter": "levo2_to_gguf.py", "converter_version": CONVERTER_VERSION, "schema_version": SCHEMA_VERSION, "dtype": dtype,
         "source": {"repository": MODEL_REPO, "revision": MODEL_REVISION, "filename": model_path.name, "bytes": model_path.stat().st_size, "sha256": _sha256(model_path), "config_sha256": _sha256(config_path) if config_path else None},
-        "levo_source_revision": LEVO_REVISION, "ggml_revision": GGML_REVISION, "tokenizer": tok["hashes"], "tensor_count": len(tensors),
+        "levo_source_revision": LEVO_REVISION, "ggml_revision": GGML_REVISION,
+        "runtime": {"repository": RUNTIME_REPO, "revision": RUNTIME_REVISION},
+        "tokenizer": {"revision": RUNTIME_REVISION, "primary_sha256": tok["hashes"]["tokenizer.json"],
+                      "assets": tok["hashes"]}, "tensor_count": len(tensors),
         "parameter_count": int(sum(int(a.size) for a in tensors.values())), "source_tensor_count": len(source_keys), "omissions": omitted,
         "tensors": sorted(({"name": n, "shape": list(a.shape), "dtype": dtype} for n, a in tensors.items()), key=lambda x: x["name"]), "mapping": mapping, "shape_notes": shape_notes}
     if dry_run:
