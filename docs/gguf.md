@@ -12,26 +12,48 @@ The architecture identifier is `levo2` and the initial schema version is `1`.
 
 ## Required metadata
 
-Standard metadata includes `general.architecture`, `general.name`,
-`general.file_type`, source repository/revision information, license link, and
-converter identity. LeVo-specific metadata includes:
+The schema-1 spellings and types are frozen as follows:
+
+| Key | Type | Meaning |
+| --- | --- | --- |
+| `general.architecture` | string | `levo2` |
+| `general.name` | string | Model display name |
+| `general.file_type` | uint32 | `0` F32 or `1` F16 |
+| `general.license`, `general.license.link` | string | Upstream use terms and URL |
+| `general.source.repo_url` | string | Source model URL |
+| `levo2.schema_version` | uint32 | `1` |
+| `levo2.converter`, `levo2.converter.version` | string | Converter identity/version |
+| `levo2.source.model_repository`, `levo2.source.model_revision` | string | Pinned checkpoint source |
+| `levo2.source.levo_repository`, `levo2.source.levo_revision` | string | Pinned Python implementation |
+| `levo2.source.ggml_repository`, `levo2.source.ggml_revision` | string | Pinned GGML implementation |
+| `levo2.source.model_sha256`, `levo2.source.config_sha256` | string | Source object hashes |
+| `levo2.tokenizer.assets_sha256.json` | string | Canonical JSON asset/hash map |
+
+Architecture metadata uses the following `levo2.*` keys:
 
 - Main/detail block counts, width, feed-forward width, head counts, context
-  length, RMS epsilon, and both RoPE bases.
+  length, RMS epsilon, and both RoPE bases: `main.block_count`,
+  `detail.block_count`, `embedding_length`, `feed_forward_length`,
+  `attention.head_count`, `attention.kv_head_count`, `context_length`,
+  `rms_norm_epsilon`, `main.rope_theta`, and `detail.rope_theta`.
 - Codebook count/size, EOS and special IDs, audio frame rate, sample rate, and
-  delay array.
+  delay array: `codebook.count`, `codebook.size`, `token.eos_id`,
+  `token.special_id`, `audio.frame_rate`, `audio.sample_rate`, and
+  `pattern.delays`.
 - Lyrics, prompt-audio, and style prefix lengths.
-- Tokenizer type, tokens, merges, added tokens, special IDs, tokenizer JSON, and
-  tokenizer configuration needed to reproduce Qwen2 byte-level BPE.
-- Source checkpoint object hash and config hash.
+  These are `condition.lyrics_prefix_length`,
+  `condition.prompt_prefix_length`, and `condition.style_prefix_length`.
 
-The exact key spelling and scalar types are frozen in this document when the
-converter lands. The loader rejects unsupported schema versions rather than
-guessing defaults.
+Qwen2 byte-level BPE is embedded through the standard GGUF tokenizer model,
+token, and merge fields. Exact upstream JSON is additionally stored in
+`levo2.tokenizer.json`, `levo2.tokenizer.added_tokens.json`,
+`levo2.tokenizer.special_tokens.json`, and `levo2.tokenizer.config.json`; the
+token count is `levo2.tokenizer.vocab_size`. The loader rejects unsupported
+schema versions rather than guessing defaults.
 
 ## Tensor groups
 
-The conversion map covers:
+The conversion map contains exactly 380 tensors and covers:
 
 - Mixed input embedding and mixed LM head.
 - Main tower Q/K/V/O projections, both RMSNorms, gate/up/down projections, and
@@ -44,9 +66,18 @@ The conversion map covers:
 - Style/type token embedding.
 - Null prompt-audio stream embeddings and learned main/detail EOT embeddings.
 
-The converter keeps an explicit allowlist of source keys. Runtime-inaccessible
-tensors, including the unused detail `lm_head`, are listed in the manifest and
-omitted. A newly observed `audiolm.*` key is an error until classified.
+Layer tensors are named `main.blk.N.*` and `detail.blk.N.*`, with suffixes
+`attn_norm.weight`, `attn_q.weight`, `attn_k.weight`, `attn_v.weight`,
+`attn_output.weight`, `ffn_norm`, `ffn_gate.weight`, `ffn_up.weight`, and
+`ffn_down.weight`. Final norms are `main.output_norm` and
+`detail.output_norm`.
+
+The converter keeps an explicit allowlist of source keys. Six
+runtime-inaccessible tensors are listed in the manifest and omitted:
+`layer2_emb.0.weight`, both Hugging Face input embeddings, detail `lm_head`,
+and `out_norm.{weight,bias}`. A newly observed `audiolm.*` key is an error until
+classified. The released style embedding's six unreachable tail rows are
+preserved and documented instead of silently truncated.
 
 ## Dtypes and layout
 

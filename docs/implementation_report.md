@@ -2,8 +2,9 @@
 
 ## Status
 
-Build foundation complete and validated on CPU and CUDA. GGUF conversion is the
-next milestone.
+The build foundation, strict GGUF converter/loader, uncached hierarchical LeLM
+graph, tokenizer, delayed pattern, and sampling primitives are implemented.
+KV-cached conditioning and generation are the next milestone.
 
 ## Environment baseline
 
@@ -53,9 +54,38 @@ next milestone.
   `ggml-cuda.cu`; it did not fail compilation or either runtime test. No GGML
   source was modified.
 
+### GGUF conversion and runtime primitives
+
+- Loaded the pinned 7,343,951,582-byte checkpoint safely on CPU with
+  `torch.load(weights_only=True, mmap=True)`; its SHA-256 is
+  `4ef2be41f6d838824f5432491408f68d9ffbeda3b1349e1208f9cdfcc64445b1`.
+- Classified all 386 checkpoint tensors: 380 runtime-reachable tensors are
+  emitted and six explicitly documented unused tensors are omitted.
+- A real F16 conversion produced 2,728,912,896 parameters in a 5.1 GiB GGUF.
+  Reader validation and the artifact SHA-256 sidecar passed. This pre-release
+  artifact will be regenerated after the final metadata/runtime contract is
+  frozen; it has not been uploaded.
+- Added deterministic JSON manifests, source/tokenizer provenance and hashes,
+  F16/F32 output, shape/type validation, and synthetic converter tests.
+- Added a strict C++ schema-1 loader that rejects wrong metadata, unknown or
+  missing tensors, wrong shapes/types, invalid offsets, and truncated files.
+- Added an uncached two-tower GGML graph with exact RMSNorm, NeoX RoPE, causal
+  attention, SwiGLU, hierarchical fusion, exact-erf bridge GELU, and three
+  output heads.
+- Added Qwen2 byte-level BPE, delayed-pattern build/revert, CFG, repetition,
+  mixed/detail top-k sampling, and EOS primitives.
+- Integrated six CPU CTests; all passed. Converter PyTest: 3/3 passed.
+- Captured a compact real-Python oracle with all 28 main layers, bridge, all 12
+  detail layers, conditional/unconditional/CFG logits, and initial greedy IDs
+  `[12794, 7883, 12301]`. Large oracle arrays remain ignored.
+
 ## Deviations from plan
 
-None.
+None. The released checkpoint has a pre-existing style-conditioner packaging
+inconsistency: its embedding has 151652 rows while Qwen2 addresses 151646 base
+IDs. The converter preserves the six unreachable tail rows and the Python
+oracle repairs the released module shape before strict loading. This is an
+upstream input defect, not a C++ behavior change.
 
 ## Known limitations
 

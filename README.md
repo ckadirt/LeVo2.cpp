@@ -9,7 +9,7 @@ until a later milestone.
 > **License:** academic, research, and education use only. Commercial and
 > production use are prohibited by the upstream SongGeneration terms.
 
-## Foundation build
+## Build and test
 
 ```bash
 git clone --recurse-submodules https://github.com/ckadirt/LeVo2.cpp.git
@@ -32,14 +32,28 @@ cmake --build build-cuda -j
 ctest --test-dir build-cuda --output-on-failure
 ```
 
-The current foundation CLI can enumerate backends and run a deterministic GGML
-operation:
+The current CLI can enumerate backends and run a deterministic GGML operation:
 
 ```bash
 ./build/bin/levo-cli --list-backends
 ./build/bin/levo-cli --smoke cpu
 ./build-cuda/bin/levo-cli --smoke cuda
 ```
+
+## Convert the pinned checkpoint
+
+```bash
+python -m pip install -r convert/requirements.txt
+python convert/levo2_to_gguf.py /path/to/model.pt \
+  --tokenizer-dir /path/to/Qwen2-7B \
+  --config /path/to/config.yaml \
+  --dtype F16 \
+  --output LeVo2-v2-medium-F16.gguf
+```
+
+Conversion emits the GGUF, a deterministic `.manifest.json`, and a `.sha256`
+sidecar. The converter accepts only the pinned v2-medium tensor inventory and
+does not instantiate upstream Python model code.
 
 See [the execution plan](docs/plan.md), [architecture contract](docs/architecture.md),
 and [implementation report](docs/implementation_report.md).

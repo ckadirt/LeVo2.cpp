@@ -1,0 +1,13 @@
+#version: 0.2
+h e
+he l
+hel l
+hell o
+w o
+wo r
+wor l
+worl d
+Ġ h
+Ġhello
+Ġ w
+Ġworld

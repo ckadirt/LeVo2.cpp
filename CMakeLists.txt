@@ -26,6 +26,11 @@ add_subdirectory(ggml)
 find_package(Threads REQUIRED)
 
 add_library(levo-core STATIC
+    src/levo-lm.cpp
+    src/levo-model.cpp
+    src/levo-pattern.cpp
+    src/levo-sampling.cpp
+    src/levo-tokenizer.cpp
     src/levo.cpp
 )
 add_library(levo::core ALIAS levo-core)
@@ -34,6 +39,8 @@ target_include_directories(levo-core
     PUBLIC
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
         $<INSTALL_INTERFACE:include>
+    PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
 target_link_libraries(levo-core PUBLIC ggml::ggml Threads::Threads)
 target_compile_features(levo-core PUBLIC cxx_std_17)
