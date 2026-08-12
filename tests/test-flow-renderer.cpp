@@ -62,8 +62,8 @@ int main() {
     // Two 4-frame windows with a 3-frame hop retain the first full window and
     // discard the one-frame continuation prefix, then crop to source length.
     std::vector<latent_window> windows{
-        {0, {0.0F, 1.0F, 2.0F, 3.0F}},
-        {3, {30.0F, 31.0F, 32.0F, 33.0F}},
+        {.input_offset_frames = 0, .denormalized_latents = {0.0F, 1.0F, 2.0F, 3.0F}},
+        {.input_offset_frames = 3, .denormalized_latents = {30.0F, 31.0F, 32.0F, 33.0F}},
     };
     const std::vector<float> assembled = assemble_flow_latent_windows(windows, 6, 4, 3, 1);
     assert((assembled == std::vector<float>{0.0F, 1.0F, 2.0F, 3.0F, 31.0F, 32.0F}));

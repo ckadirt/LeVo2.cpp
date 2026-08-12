@@ -124,6 +124,11 @@ struct render_config {
     float cfg_scale = 0.0F;
     uint64_t seed = 0;
     std::vector<float> external_noise;
+    // Retain every per-window Flow latent and decoded audio window in the
+    // result. Parity tooling needs those intermediate boundaries, and capturing
+    // them here keeps the tooling on the production path instead of a parallel
+    // reimplementation. Nothing extra is allocated while this is false.
+    bool capture_windows = false;
 };
 
 enum class render_stage {
@@ -160,6 +165,17 @@ struct render_provenance {
     bool external_noise = false;
 };
 
+// Per-window renderer intermediates, populated only when `capture_windows` is
+// set. Latents are C-order [1000, 64] in the renderer's own frame-major layout;
+// decoded audio is channel-major [2, 1000 * 1920] before crossfade and crop.
+struct render_window_capture {
+    std::size_t input_offset_frames = 0;
+    std::vector<float> normalized_latents;
+    std::vector<float> denormalized_latents;
+    std::vector<float> decoded_left;
+    std::vector<float> decoded_right;
+};
+
 struct render_result {
     // IEEE-F32-ready, frame-interleaved [left, right] samples at 48 kHz.
     std::vector<float> interleaved_stereo;
@@ -168,6 +184,7 @@ struct render_result {
     std::size_t rendered_windows = 0;
     uint32_t sample_rate = 48000;
     render_provenance provenance;
+    std::vector<render_window_capture> windows;
 };
 
 // Read canonical [3,T] int32 `tokens.npy`, run Flow then VAE on the selected

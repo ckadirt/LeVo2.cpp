@@ -35,9 +35,13 @@ using velocity_callback = std::function<std::vector<float>(
         const velocity_callback & velocity);
 
 // One denormalized [window_frames, latent_dim] Flow result. The input frame
-// offset identifies the corresponding repeated/padded token window.
+// offset identifies the corresponding repeated/padded token window. The
+// normalized Euler solution is retained alongside it because the official
+// oracle exports both, and the continuation context is defined in normalized
+// space.
 struct latent_window {
     std::size_t input_offset_frames = 0;
+    std::vector<float> normalized_latents;
     std::vector<float> denormalized_latents;
 };
 

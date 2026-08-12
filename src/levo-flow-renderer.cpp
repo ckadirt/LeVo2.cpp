@@ -235,6 +235,7 @@ render_output renderer::render(const render_input & input, const render_options 
         const std::vector<float> normalized = solve_flow_euler(solver_input, steps, evaluate_velocity);
         latent_window window;
         window.input_offset_frames = token_offset;
+        window.normalized_latents = normalized;
         window.denormalized_latents = conditioning_.denormalize_latents(normalized, hp.window_frames);
         prior_raw = window.denormalized_latents;
         result.windows.push_back(std::move(window));

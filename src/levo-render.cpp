@@ -233,6 +233,18 @@ render_result render_tokens_to_audio(const render_config & config,
     const renderer_stereo_audio stereo = assemble_renderer_audio(schedule, decoded_windows);
     if (stereo.left.size() != stereo.right.size()) fail("audio assembler returned uneven stereo channels");
     render_result result;
+    if (config.capture_windows) {
+        result.windows.reserve(latents.windows.size());
+        for (std::size_t index = 0; index < latents.windows.size(); ++index) {
+            render_window_capture capture;
+            capture.input_offset_frames = latents.windows[index].input_offset_frames;
+            capture.normalized_latents = latents.windows[index].normalized_latents;
+            capture.denormalized_latents = latents.windows[index].denormalized_latents;
+            capture.decoded_left = std::move(decoded_windows[index].left);
+            capture.decoded_right = std::move(decoded_windows[index].right);
+            result.windows.push_back(std::move(capture));
+        }
+    }
     result.samples_per_channel = stereo.samples();
     result.source_frames = streams.frames();
     result.rendered_windows = latents.windows.size();
