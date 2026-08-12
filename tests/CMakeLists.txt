@@ -7,7 +7,7 @@ if(GGML_CUDA)
     set_tests_properties(backend-smoke-cuda PROPERTIES LABELS "cuda")
 endif()
 
-foreach(test_name IN ITEMS model lm kv conditioner flow-model flow-conditioning generation pattern renderer-pattern sampling tokenizer token-io audio-ops vae-model vae wav)
+foreach(test_name IN ITEMS model lm kv conditioner flow-model flow-conditioning flow-estimator generation pattern renderer-pattern sampling tokenizer token-io audio-ops vae-model vae wav)
     add_executable(test-${test_name} test-${test_name}.cpp)
     target_link_libraries(test-${test_name} PRIVATE levo::core)
     target_include_directories(test-${test_name} PRIVATE ${PROJECT_SOURCE_DIR}/src)
