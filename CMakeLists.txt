@@ -37,6 +37,9 @@ add_library(levo-core STATIC
     src/levo-token-io.cpp
     src/levo-tokenizer.cpp
     src/levo.cpp
+    third_party/llama-unicode/unicode.cpp
+    third_party/llama-unicode/unicode-data.cpp
+    third_party/utf8proc/utf8proc.c
 )
 add_library(levo::core ALIAS levo-core)
 
@@ -46,6 +49,8 @@ target_include_directories(levo-core
         $<INSTALL_INTERFACE:include>
     PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/third_party/llama-unicode
+        ${CMAKE_CURRENT_SOURCE_DIR}/third_party/utf8proc
 )
 target_link_libraries(levo-core PUBLIC ggml::ggml Threads::Threads)
 target_compile_features(levo-core PUBLIC cxx_std_17)
@@ -75,6 +80,9 @@ if(LEVO_BUILD_PARITY_TOOLS)
     add_executable(levo-cfg-parity tools/levo-cfg-parity.cpp)
     target_link_libraries(levo-cfg-parity PRIVATE levo::core)
     target_include_directories(levo-cfg-parity PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    add_executable(levo-tokenizer-parity tools/levo-tokenizer-parity.cpp)
+    target_link_libraries(levo-tokenizer-parity PRIVATE levo::core)
+    target_include_directories(levo-tokenizer-parity PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 endif()
 
 set_target_properties(levo-core levo-cli PROPERTIES

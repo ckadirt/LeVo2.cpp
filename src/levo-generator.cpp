@@ -42,8 +42,13 @@ bool is_gpu_device(ggml_backend_dev_t device) {
            type == GGML_BACKEND_DEVICE_TYPE_IGPU;
 }
 
+bool is_cuda_device(ggml_backend_dev_t device) {
+    const std::string name = ggml_backend_dev_name(device);
+    return is_gpu_device(device) && name.rfind("CUDA", 0) == 0;
+}
+
 void configure_cuda_compute_type(ggml_backend_dev_t device) {
-    if (!is_gpu_device(device) || std::getenv("GGML_CUDA_CUBLAS_COMPUTE_TYPE") != nullptr) {
+    if (!is_cuda_device(device) || std::getenv("GGML_CUDA_CUBLAS_COMPUTE_TYPE") != nullptr) {
         return;
     }
 #if defined(_WIN32)
@@ -74,6 +79,9 @@ ggml_backend_dev_t select_device(backend_kind requested, int device_index) {
         return nullptr;
     };
     if (requested == backend_kind::auto_select) {
+        if (ggml_backend_dev_t device = nth([](ggml_backend_dev_t value) { return is_cuda_device(value); })) {
+            return device;
+        }
         if (ggml_backend_dev_t device = nth([](ggml_backend_dev_t value) { return is_gpu_device(value); })) {
             return device;
         }
@@ -86,14 +94,15 @@ ggml_backend_dev_t select_device(backend_kind requested, int device_index) {
     }
 
     const auto matches_requested = [requested](ggml_backend_dev_t device) {
-        return requested == backend_kind::cuda
-            ? is_gpu_device(device)
-            : ggml_backend_dev_type(device) == GGML_BACKEND_DEVICE_TYPE_CPU;
+        if (requested == backend_kind::cuda) return is_cuda_device(device);
+        if (requested == backend_kind::gpu) return is_gpu_device(device);
+        return ggml_backend_dev_type(device) == GGML_BACKEND_DEVICE_TYPE_CPU;
     };
     if (ggml_backend_dev_t device = nth(matches_requested)) {
         return device;
     }
-    const char * const wanted = requested == backend_kind::cuda ? "CUDA/GPU" : "CPU";
+    const char * const wanted = requested == backend_kind::cuda ? "CUDA" :
+                                requested == backend_kind::gpu ? "GPU" : "CPU";
     fail(std::string("requested ") + wanted + " backend device is unavailable");
 }
 
@@ -304,21 +313,18 @@ generation_result generate_tokens(const generation_config & config,
     const detail::conditioning_result conditioning = detail::prepare_conditioning(
         *model, tokenizer, config.lyrics, config.description);
 
-    // Position zero is the delayed pattern's all-special BOS position. The
-    // first model output predicts delayed sequence position one.
-    detail::lm_input initial;
-    initial.mixed_tokens = {model->hparams().special_token_id};
-    initial.vocal_tokens = {model->hparams().special_token_id};
-    initial.bgm_tokens = {model->hparams().special_token_id};
     std::unique_ptr<detail::kv_session> conditional = detail::kv_session::create(model, true);
     std::unique_ptr<detail::kv_session> null_branch = detail::kv_session::create(model, true);
-    // Upstream's first streaming slice contains delayed slot zero (all
-    // special IDs); the fuser prepends the dense prefix on this same call.
-    // Its output predicts the first valid mixed position.
-    const detail::lm_output conditional_initial = conditional->prefill_conditioned(
-        conditioning.conditional, initial);
-    const detail::lm_output null_initial = null_branch->prefill_conditioned(
-        conditioning.null_condition, initial);
+    // Populate each branch's dense prefix, then decode delayed slot zero (the
+    // all-special BOS) to predict slot one. Upstream fuses both into its first
+    // streaming graph; the split is mathematically equivalent and matches its
+    // cache state numerically, while a combined GGML graph uses different
+    // CUDA kernels and perturbs near-tied detail logits after cached steps.
+    conditional->prefill_conditioned_prefix(conditioning.conditional);
+    null_branch->prefill_conditioned_prefix(conditioning.null_condition);
+    const int32_t special = model->hparams().special_token_id;
+    const detail::lm_output conditional_initial = conditional->decode(special, special, special);
+    const detail::lm_output null_initial = null_branch->decode(special, special, special);
     const detail::generation_logits initial_logits = cfg_logits_from_outputs(
         conditional_initial, null_initial, config.cfg_scale);
 
@@ -347,15 +353,13 @@ void write_generation_artifact(const std::filesystem::path & output_path,
     }
     token_io::artifact_metadata metadata;
     metadata.model_name = result.model_name.empty() ? config.model_path.filename().string() : result.model_name;
-    metadata.model_revision = config.model_revision.empty() ? result.model_revision : config.model_revision;
-    metadata.model_sha256 = config.model_sha256.empty() ? result.model_sha256 : config.model_sha256;
+    metadata.model_revision = result.model_revision;
+    metadata.model_sha256 = result.model_sha256;
     metadata.generator = "levo.cpp";
     metadata.generator_revision = version();
-    metadata.runtime_revision = config.runtime_revision.empty() ? result.runtime_revision : config.runtime_revision;
-    metadata.tokenizer_revision = config.tokenizer_revision.empty()
-        ? result.tokenizer_revision : config.tokenizer_revision;
-    metadata.tokenizer_sha256 = config.tokenizer_sha256.empty()
-        ? result.tokenizer_sha256 : config.tokenizer_sha256;
+    metadata.runtime_revision = result.runtime_revision;
+    metadata.tokenizer_revision = result.tokenizer_revision;
+    metadata.tokenizer_sha256 = result.tokenizer_sha256;
     metadata.backend_name = result.backend_name;
     metadata.lyrics = config.lyrics;
     metadata.description = config.description;

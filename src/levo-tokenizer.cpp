@@ -1,4 +1,6 @@
 #include "levo-tokenizer.h"
+#include "unicode.h"
+#include "utf8proc.h"
 
 #include <algorithm>
 #include <cctype>
@@ -62,23 +64,26 @@ private:
 };
 const json * get(const json & x, const char * key) { for (const auto & kv : x.object) if (kv.first == key) return &kv.second; return nullptr; }
 
-std::string bytes_to_unicode(const std::string & utf8) {
-    // GPT-2's alphabet operates on UTF-8 *bytes*, not Unicode code points.
-    // Every byte is mapped to a printable Unicode code point.
-    std::string out;
-    for (unsigned char b : utf8) {
-        unsigned mapped = 0;
-        if ((b >= 33 && b <= 126) || (b >= 161 && b <= 172) || b >= 174) mapped = b;
-        else { unsigned rank = 0; for (unsigned x = 0; x < b; ++x) if (!((x >= 33 && x <= 126) || (x >= 161 && x <= 172) || (x >= 174 && x <= 255))) ++rank; mapped = 256 + rank; }
-        if (mapped < 0x80) out += static_cast<char>(mapped);
-        else if (mapped < 0x800) { out += static_cast<char>(0xc0 | (mapped >> 6)); out += static_cast<char>(0x80 | (mapped & 63)); }
-        else { out += static_cast<char>(0xe0 | (mapped >> 12)); out += static_cast<char>(0x80 | ((mapped >> 6) & 63)); out += static_cast<char>(0x80 | (mapped & 63)); }
-    }
-    return out;
-}
-
 std::vector<std::string> split_utf8_bytes(const std::string & text) {
     std::vector<std::string> out; for(std::size_t i=0;i<text.size();){unsigned char c=text[i];std::size_t n=(c<0x80?1:c<0xe0?2:c<0xf0?3:4);if(i+n>text.size())n=1;out.push_back(text.substr(i,n));i+=n;} return out;
+}
+
+std::string normalize_nfc(const std::string & text) {
+    utf8proc_uint8_t * normalized = nullptr;
+    const utf8proc_ssize_t size = utf8proc_map(
+        reinterpret_cast<const utf8proc_uint8_t *>(text.data()),
+        static_cast<utf8proc_ssize_t>(text.size()), &normalized,
+        static_cast<utf8proc_option_t>(UTF8PROC_STABLE | UTF8PROC_COMPOSE));
+    if (size < 0) {
+        throw std::invalid_argument(std::string("invalid UTF-8 tokenizer input: ") +
+                                    utf8proc_errmsg(size));
+    }
+    std::string result;
+    if (size != 0) {
+        result.assign(reinterpret_cast<const char *>(normalized), static_cast<std::size_t>(size));
+    }
+    std::free(normalized);
+    return result;
 }
 
 } // namespace
@@ -159,52 +164,17 @@ const std::string & ByteLevelBPETokenizer::token_string(int64_t id) const {if(id
 std::vector<std::string> ByteLevelBPETokenizer::bpe(const std::string & piece) const {auto cached=bpe_cache_.find(piece);if(cached!=bpe_cache_.end())return cached->second;auto symbols=split_utf8_bytes(piece);if(symbols.empty())return {};while(symbols.size()>1){std::size_t best=std::numeric_limits<std::size_t>::max(),at=symbols.size();for(std::size_t i=0;i+1<symbols.size();++i){auto it=merge_rank_.find(symbols[i]+"\n"+symbols[i+1]);if(it!=merge_rank_.end()&&it->second<best){best=it->second;at=i;}}if(at==symbols.size())break;symbols[at]+=symbols[at+1];symbols.erase(symbols.begin()+static_cast<std::ptrdiff_t>(at+1));}bpe_cache_[piece]=symbols;return symbols;}
 
 std::vector<int64_t> ByteLevelBPETokenizer::encode(const std::string & text) const {
-    std::vector<int64_t> out; std::size_t pos=0; while(pos<text.size()) {std::string special;int64_t sid=0;for(const auto&kv:special_tokens_)if(text.compare(pos,kv.first.size(),kv.first)==0&&(special.empty()||kv.first.size()>special.size())){special=kv.first;sid=kv.second;}if(!special.empty()){out.push_back(sid);pos+=special.size();continue;}
-        std::size_t end=pos+1; while(end<text.size()){bool hit=false;for(const auto&kv:special_tokens_)if(text.compare(end,kv.first.size(),kv.first)==0){hit=true;break;}if(hit)break;++end;}std::string chunk=text.substr(pos,end-pos);
-        // Byte-level GPT2 pre-tokenization. Leading whitespace belongs to the
-        // following run; this covers Qwen's common lyric/text cases while
-        // retaining every byte losslessly.
-        std::size_t i=0; while(i<chunk.size()) {
-            std::size_t j=i; const bool initial_ws=std::isspace(static_cast<unsigned char>(chunk[i]));
-            if (initial_ws) {
-                while(j<chunk.size()&&std::isspace(static_cast<unsigned char>(chunk[j]))) ++j;
-                // Qwen/GPT-2's regex permits only one leading space on a
-                // word; preceding spaces are emitted as whitespace pieces.
-                if (j < chunk.size() && j - i > 1) j = i + 1;
-            }
-            if (j<chunk.size()) {
-                const unsigned char first=static_cast<unsigned char>(chunk[j]);
-                const int category=(first>=128||std::isalpha(first))?1:std::isdigit(first)?2:0;
-                if (category == 2) ++j; // Qwen's \p{N} alternative is one digit.
-                while(j<chunk.size()&&!std::isspace(static_cast<unsigned char>(chunk[j]))) {
-                    if (category == 2) break;
-                    const unsigned char c=static_cast<unsigned char>(chunk[j]);
-                    const int this_category=(c>=128||std::isalpha(c))?1:std::isdigit(c)?2:0;
-                    if (this_category!=category) break;
-                    ++j;
-                }
-                // The GPT-2/Qwen regex keeps common English contractions as
-                // one pre-token ("it" + "'s" is two BPE pieces, not three).
-                if (category == 1 && j < chunk.size() && chunk[j] == '\'' ) {
-                    const char * suffixes[] = {"'s","'t","'r","'m","'d","'ll","'ve","'re"};
-                    for (const char * suffix : suffixes) {
-                        const std::size_t n=std::char_traits<char>::length(suffix);
-                        if (chunk.compare(j,n,suffix)==0) { j += n; break; }
-                    }
-                }
-                if (category == 0) {
-                    const std::size_t punct_start = initial_ws ? i + 1 : i;
-                    if (punct_start < chunk.size() && chunk[punct_start] == '\'' && punct_start + 1 < chunk.size() &&
-                        (std::isalpha(static_cast<unsigned char>(chunk[punct_start + 1])) || static_cast<unsigned char>(chunk[punct_start + 1]) >= 128)) {
-                        j = punct_start + 1;
-                        while (j < chunk.size() && (std::isalpha(static_cast<unsigned char>(chunk[j])) || static_cast<unsigned char>(chunk[j]) >= 128)) ++j;
-                    }
-                    while (j < chunk.size() && (chunk[j] == '\r' || chunk[j] == '\n')) ++j;
-                }
-            }
-            if(j==i) ++j;
-            std::string mapped=bytes_to_unicode(chunk.substr(i,j-i));
-            for(const auto&s:bpe(mapped)){auto it=token_to_id_.find(s);if(it==token_to_id_.end()){std::ostringstream err;err<<"tokenizer vocabulary cannot encode BPE piece (bytes";for(unsigned char c:s)err<<" "<<std::hex<<static_cast<unsigned>(c);err<<")";throw std::runtime_error(err.str());}out.push_back(it->second);} i=j;
+    const std::string normalized_text = normalize_nfc(text);
+    std::vector<int64_t> out; std::size_t pos=0; while(pos<normalized_text.size()) {std::string special;int64_t sid=0;for(const auto&kv:special_tokens_)if(normalized_text.compare(pos,kv.first.size(),kv.first)==0&&(special.empty()||kv.first.size()>special.size())){special=kv.first;sid=kv.second;}if(!special.empty()){out.push_back(sid);pos+=special.size();continue;}
+        std::size_t end=pos+1; while(end<normalized_text.size()){bool hit=false;for(const auto&kv:special_tokens_)if(normalized_text.compare(end,kv.first.size(),kv.first)==0){hit=true;break;}if(hit)break;++end;}std::string chunk=normalized_text.substr(pos,end-pos);
+        // This is the exact regex embedded by the pinned Qwen2 tokenizer.
+        // The vendored llama.cpp Unicode splitter supplies Unicode category
+        // semantics and GPT-2 byte encoding without a runtime dependency.
+        static const std::vector<std::string> qwen2_regex = {
+            "(?:'[sS]|'[tT]|'[rR][eE]|'[vV][eE]|'[mM]|'[lL][lL]|'[dD])|[^\\r\\n\\p{L}\\p{N}]?\\p{L}+|\\p{N}| ?[^\\s\\p{L}\\p{N}]+[\\r\\n]*|\\s*[\\r\\n]+|\\s+(?!\\S)|\\s+"
+        };
+        for (const std::string & mapped : unicode_regex_split(chunk, qwen2_regex, true)) {
+            for(const auto&s:bpe(mapped)){auto it=token_to_id_.find(s);if(it==token_to_id_.end()){std::ostringstream err;err<<"tokenizer vocabulary cannot encode BPE piece (bytes";for(unsigned char c:s)err<<" "<<std::hex<<static_cast<unsigned>(c);err<<")";throw std::runtime_error(err.str());}out.push_back(it->second);}
         }
         pos=end;
     } return out;

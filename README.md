@@ -3,8 +3,9 @@
 Portable C++17/GGML inference for the LeVo 2 hierarchical audio language model.
 
 The v0.1 milestone generates three streams of LeVo audio tokens from lyrics and
-a style description. Audio rendering remains in the official Python decoder
-until a later milestone.
+a style description. The pinned v2-medium F16 LeLM path is implemented and
+parity-checked. Audio rendering remains in the official Python decoder until a
+later milestone; the native Flow/VAE renderer is not part of this release.
 
 > **License:** academic, research, and education use only. Commercial and
 > production use are prohibited by the upstream SongGeneration terms.
@@ -33,7 +34,12 @@ ctest --test-dir build-cuda --output-on-failure
 ```
 
 The CLI can enumerate backends, run a deterministic GGML operation, or generate
-the canonical three-stream token artifact using only assets embedded in GGUF:
+the canonical three-stream token artifact using only assets embedded in GGUF.
+Download `LeVo2-v2-medium-F16.gguf` and its checksum/manifest from
+[`ckadirt/LeVo2-GGUF`](https://huggingface.co/ckadirt/LeVo2-GGUF), then verify
+it with `sha256sum -c LeVo2-v2-medium-F16.gguf.sha256`.
+
+Example commands:
 
 ```bash
 ./build/bin/levo-cli --list-backends
@@ -52,9 +58,22 @@ the canonical three-stream token artifact using only assets embedded in GGUF:
 Use `--greedy` for deterministic argmax generation. The output is an int32
 NumPy tensor with shape `[3,T]` plus a JSON provenance sidecar.
 
+The frozen parity fixture is lyrics `[verse] Hello world.` with style
+`female, pop`. C++ and the official Python oracle produce byte-identical greedy
+arrays at 2.0 seconds (`[3,50]`), 10.08 seconds (`[3,252]`), and 30 seconds
+(`[3,750]`). The raw tensor SHA-256 values are
+`f57268812d4befe556a2b8ee54afae70b657c997616f3b959d7fc5add7ef737a`,
+`6f83f15e1ad5815ff215e00ef7c016bf858432a681127f0b9ee28178848dfc98`, and
+`95adbd38aeee3188f9a2bd1a770eba3587af7af2ef7fbc7103644a53dda466b0`.
+
 For CUDA parity, the generator defaults GGML's cuBLAS GEMMs to FP32
 accumulation while keeping the model and activation boundaries F16. An explicit
 `GGML_CUDA_CUBLAS_COMPUTE_TYPE` environment value overrides that default.
+
+The Qwen2 tokenizer uses the exact vendored llama.cpp Unicode regex splitter
+and utf8proc NFC normalization, with the pinned tokenizer configuration
+embedded in GGUF. Its 10-case English, punctuation, whitespace, and Unicode
+conformance check passes against the official Transformers tokenizer.
 
 ## Render tokens with official Python LeVo
 

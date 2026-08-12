@@ -21,6 +21,9 @@ levo::backend_kind parse_backend(const std::string & value) {
     if (value == "cuda") {
         return levo::backend_kind::cuda;
     }
+    if (value == "gpu") {
+        return levo::backend_kind::gpu;
+    }
     throw std::invalid_argument("unknown backend '" + value + "'");
 }
 
@@ -29,11 +32,11 @@ void usage(const char * program) {
         << "LeVo2.cpp " << levo::version() << "\n\n"
         << "Foundation diagnostics:\n"
         << "  " << program << " --list-backends\n"
-        << "  " << program << " --smoke [auto|cpu|cuda] [device-index]\n\n"
+        << "  " << program << " --smoke [auto|cpu|cuda|gpu] [device-index]\n\n"
         << "Autoregressive token generation:\n"
-        << "  " << program << " --model MODEL.gguf --lyrics lyrics.txt --prompt TEXT\n"
+        << "  " << program << " --model MODEL.gguf --lyrics lyrics.txt [--prompt TEXT]\n"
         << "      --duration SECONDS --output tokens.npy\n"
-        << "      [--backend auto|cpu|cuda] [--device N] [--greedy] [--seed N]\n";
+        << "      [--backend auto|cpu|cuda|gpu] [--device N] [--greedy] [--seed N]\n";
 }
 
 std::string read_text_file(const std::string & path) {
@@ -105,7 +108,6 @@ cli_generation_request parse_generation(int argc, char ** argv) {
     levo::generation_config & config = request.config;
     bool model = false;
     bool lyrics = false;
-    bool prompt = false;
     bool duration = false;
     bool output = false;
     std::string lyrics_path;
@@ -125,7 +127,6 @@ cli_generation_request parse_generation(int argc, char ** argv) {
             lyrics = true;
         } else if (argument == "--prompt") {
             config.description = value();
-            prompt = true;
         } else if (argument == "--duration") {
             config.duration_seconds = parse_duration(value());
             duration = true;
@@ -147,8 +148,8 @@ cli_generation_request parse_generation(int argc, char ** argv) {
             throw std::invalid_argument("unknown option '" + argument + "'");
         }
     }
-    if (!model || !lyrics || !prompt || !duration || !output) {
-        throw std::invalid_argument("generation requires --model, --lyrics, --prompt, --duration, and --output");
+    if (!model || !lyrics || !duration || !output) {
+        throw std::invalid_argument("generation requires --model, --lyrics, --duration, and --output");
     }
     config.lyrics = read_text_file(lyrics_path);
     if (request.output_path.extension() != ".npy") {

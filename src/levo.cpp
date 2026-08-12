@@ -44,12 +44,24 @@ backend_kind classify_device(ggml_backend_dev_t device) {
     switch (ggml_backend_dev_type(device)) {
         case GGML_BACKEND_DEVICE_TYPE_GPU:
         case GGML_BACKEND_DEVICE_TYPE_IGPU:
-            return backend_kind::cuda;
+            return std::string(ggml_backend_dev_name(device)).rfind("CUDA", 0) == 0
+                ? backend_kind::cuda : backend_kind::gpu;
         case GGML_BACKEND_DEVICE_TYPE_CPU:
         case GGML_BACKEND_DEVICE_TYPE_ACCEL:
         default:
             return backend_kind::cpu;
     }
+}
+
+bool is_gpu_device(ggml_backend_dev_t device) {
+    const auto type = ggml_backend_dev_type(device);
+    return type == GGML_BACKEND_DEVICE_TYPE_GPU ||
+           type == GGML_BACKEND_DEVICE_TYPE_IGPU;
+}
+
+bool is_cuda_device(ggml_backend_dev_t device) {
+    return is_gpu_device(device) &&
+           std::string(ggml_backend_dev_name(device)).rfind("CUDA", 0) == 0;
 }
 
 ggml_backend_dev_t select_device(backend_kind requested, int device_index) {
@@ -59,32 +71,43 @@ ggml_backend_dev_t select_device(backend_kind requested, int device_index) {
 
     ggml_backend_load_all();
 
-    const auto wanted = requested == backend_kind::cuda
-        ? GGML_BACKEND_DEVICE_TYPE_GPU
-        : GGML_BACKEND_DEVICE_TYPE_CPU;
-
-    if (requested == backend_kind::auto_select) {
-        if (auto * gpu = ggml_backend_dev_by_type(GGML_BACKEND_DEVICE_TYPE_GPU)) {
-            return gpu;
-        }
-        if (auto * cpu = ggml_backend_dev_by_type(GGML_BACKEND_DEVICE_TYPE_CPU)) {
-            return cpu;
-        }
-        throw std::runtime_error("GGML did not register a usable CPU or GPU backend");
-    }
-
-    int match = 0;
-    for (std::size_t i = 0; i < ggml_backend_dev_count(); ++i) {
-        auto * device = ggml_backend_dev_get(i);
-        if (ggml_backend_dev_type(device) == wanted) {
-            if (match == device_index) {
+    const auto nth = [device_index](const auto & predicate) -> ggml_backend_dev_t {
+        int match = 0;
+        for (std::size_t i = 0; i < ggml_backend_dev_count(); ++i) {
+            auto * device = ggml_backend_dev_get(i);
+            if (predicate(device) && match++ == device_index) {
                 return device;
             }
-            ++match;
         }
+        return nullptr;
+    };
+
+    if (requested == backend_kind::auto_select) {
+        if (auto * cuda = nth([](ggml_backend_dev_t device) { return is_cuda_device(device); })) {
+            return cuda;
+        }
+        if (auto * gpu = nth([](ggml_backend_dev_t device) { return is_gpu_device(device); })) {
+            return gpu;
+        }
+        if (auto * cpu = nth([](ggml_backend_dev_t device) {
+                return ggml_backend_dev_type(device) == GGML_BACKEND_DEVICE_TYPE_CPU;
+            })) {
+            return cpu;
+        }
+        throw std::runtime_error("GGML did not register a usable CPU or GPU backend at the requested device index");
     }
 
-    const char * label = requested == backend_kind::cuda ? "CUDA/GPU" : "CPU";
+    const auto matches_requested = [requested](ggml_backend_dev_t device) {
+        if (requested == backend_kind::cuda) return is_cuda_device(device);
+        if (requested == backend_kind::gpu) return is_gpu_device(device);
+        return ggml_backend_dev_type(device) == GGML_BACKEND_DEVICE_TYPE_CPU;
+    };
+    if (auto * device = nth(matches_requested)) {
+        return device;
+    }
+
+    const char * label = requested == backend_kind::cuda ? "CUDA" :
+                         requested == backend_kind::gpu ? "GPU" : "CPU";
     throw std::runtime_error(std::string("requested ") + label +
                              " backend device is unavailable");
 }

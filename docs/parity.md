@@ -54,6 +54,30 @@ before/after metrics.
 CI runs CPU builds and synthetic fixtures without model credentials. Real-model
 and CUDA gates run locally on the provisioned RTX 4090 before release.
 
+The frozen real-model fixture is lyrics `[verse] Hello world.` and style
+`female, pop`. It is exact at all three release lengths: 2.0 seconds (`[3,50]`),
+10.08 seconds (`[3,252]`, crossing the delayed-stream boundary), and 30 seconds
+(`[3,750]`). The raw tensor SHA-256 values are, respectively:
+
+```text
+f57268812d4befe556a2b8ee54afae70b657c997616f3b959d7fc5add7ef737a
+6f83f15e1ad5815ff215e00ef7c016bf858432a681127f0b9ee28178848dfc98
+95adbd38aeee3188f9a2bd1a770eba3587af7af2ef7fbc7103644a53dda466b0
+```
+
+For numerical parity, C++ pre-fills the condition prefix into the KV cache and
+then decodes the initial BOS slot separately. This is a deliberate numerical
+strategy: upstream combines prefix and BOS in its first transformer call, but
+the split path preserves the same mathematical sequence while matching the
+frozen PyTorch greedy oracle through the long generation. CUDA uses FP32 cuBLAS
+accumulation for F16 GEMMs; F16 storage and activation boundaries are retained.
+
+An exploratory multilingual 10.08-second prompt had exactly matching
+conditioning tensors and tokenizer IDs but diverged at near-tied greedy logits
+(mixed frame 64, vocal frame 0, accompaniment frame 3). This is recorded as a
+known cross-library floating-point limitation; release thresholds and the frozen
+fixture above are unchanged.
+
 ## CUDA accumulation contract
 
 The F16 checkpoint retains F16 storage and activation boundaries, but its
@@ -62,3 +86,7 @@ oracle. The public generator sets GGML's upstream
 `GGML_CUDA_CUBLAS_COMPUTE_TYPE=f32` mode on CUDA when the caller has not already
 set it. An explicit environment value remains an advanced override and may not
 satisfy the release parity gates.
+
+The tokenizer parity gate also covers the vendored llama.cpp Qwen2 regex splitter
+and utf8proc NFC normalization. Ten representative cases match the pinned
+Transformers tokenizer exactly.

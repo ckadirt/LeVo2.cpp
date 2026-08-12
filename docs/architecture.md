@@ -98,8 +98,11 @@ Classifier-free guidance conceptually evaluates two branches:
 C++ uses one KV session per branch. Each session has independent main/detail
 per-layer K/V caches; together they are equivalent to upstream's batch of two.
 Positions are continuous across the 952 condition positions and the delayed
-audio pattern. The first model call processes the full condition prefix plus
-the initial all-special sequence slot. Later calls process one delayed sequence
+audio pattern. For the released CUDA parity path, C++ first pre-fills the full
+condition prefix, then decodes the initial all-special/BOS sequence slot as a
+separate call. This is mathematically equivalent to upstream's combined first
+call, but is intentionally split to avoid a numerical kernel-boundary
+difference against the PyTorch oracle. Later calls process one delayed sequence
 position at a time.
 
 For `T = floor(duration_seconds * 25)`, the delayed pattern contains `T + 251`

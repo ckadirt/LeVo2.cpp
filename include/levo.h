@@ -14,6 +14,7 @@ enum class backend_kind {
     auto_select,
     cpu,
     cuda,
+    gpu,
 };
 
 struct backend_info {
@@ -65,13 +66,6 @@ struct generation_config {
     float cfg_scale = 1.5F;
     generation_sampling_config sampling;
 
-    // Optional provenance fields copied into the JSON token manifest.  They
-    // are intentionally not used for model selection or validation.
-    std::string model_revision;
-    std::string model_sha256;
-    std::string runtime_revision;
-    std::string tokenizer_revision;
-    std::string tokenizer_sha256;
 };
 
 struct generation_progress {

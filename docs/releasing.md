@@ -32,7 +32,7 @@ Upload:
 
 - `LeVo2-v2-medium-F16.gguf`
 - `LeVo2-v2-medium-F16.gguf.sha256`
-- `manifest.json`
+- `LeVo2-v2-medium-F16.gguf.manifest.json`
 - Model card with provenance, build/use commands, limitations, and the exact
   research-only restriction
 - Required license and third-party notices

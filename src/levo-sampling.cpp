@@ -68,10 +68,14 @@ int64_t sample_top_k(const logits & input, std::size_t top_k, float temperature,
         candidates[i] = i;
     }
     if (top_k > 0 && top_k < candidates.size()) {
-        std::stable_sort(candidates.begin(), candidates.end(), [&](std::size_t a, std::size_t b) {
+        std::vector<std::size_t> ranked = candidates;
+        std::stable_sort(ranked.begin(), ranked.end(), [&](std::size_t a, std::size_t b) {
             return input[a] > input[b];
         });
-        candidates.resize(top_k);
+        const float threshold = input[ranked[top_k - 1]];
+        candidates.erase(std::remove_if(candidates.begin(), candidates.end(), [&](std::size_t index) {
+            return input[index] < threshold;
+        }), candidates.end());
     }
     auto best = *std::max_element(candidates.begin(), candidates.end(), [&](std::size_t a, std::size_t b) {
         return input[a] < input[b];
@@ -114,7 +118,7 @@ std::vector<int64_t> Sampler::sample_streams(const std::vector<logits> & streams
             apply_unique_token_repetition_penalty(adjusted,
                 std::vector<int64_t>(recent[q].begin() + static_cast<std::ptrdiff_t>(begin), recent[q].end()),
                 config.repetition_penalty,
-                adjusted.empty() ? 0 : adjusted.size() - 1); // exclude EOS exactly as upstream
+                adjusted.empty() ? 0 : adjusted.size() - 1); // upstream code_size includes EOS; exclude EOS only
         }
         // Upstream applies prompt-token exclusion only to the mixed stream;
         // detail streams use top-k=1 without that ignore list.

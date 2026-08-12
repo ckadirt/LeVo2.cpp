@@ -21,3 +21,20 @@ Qwen2 tokenizer assets distributed with the SongGeneration Runtime are governed
 by the Apache License 2.0 supplied with that runtime:
 
 https://huggingface.co/lglg666/SongGeneration-Runtime/tree/cc258cc694a63114c61684cc26d0583b8ad777d0/third_party/Qwen2-7B
+
+## llama.cpp Unicode tokenizer support
+
+The vendored Unicode classification and regex-splitting sources under
+`third_party/llama-unicode` are from ggml-org/llama.cpp commit
+`84e908c625fb60992b4cdef8180fb12fa9b4c4bf`. They are distributed under the
+MIT License included in that directory:
+
+https://github.com/ggml-org/llama.cpp/tree/84e908c625fb60992b4cdef8180fb12fa9b4c4bf/src
+
+## utf8proc
+
+Unicode NFC normalization uses vendored utf8proc from commit
+`0075ed7d0adba45682ee6bf7a83b10f8fd110163`. utf8proc is distributed under
+the MIT License included in `third_party/utf8proc`:
+
+https://github.com/JuliaStrings/utf8proc/tree/0075ed7d0adba45682ee6bf7a83b10f8fd110163

@@ -2,12 +2,12 @@
 
 ## Status
 
-The v0.1 implementation is feature-complete: strict GGUF conversion/loading,
+The v0.1 LeLM implementation is complete: strict GGUF conversion/loading,
 embedded Qwen2 conditioning, both hierarchical LeLM towers, persistent KV
 caches, delayed generation, canonical NPY/JSON artifacts, and the official
-Python Flow/VAE decoder bridge are implemented. The real-F16 numerical and
-exact-greedy parity gates pass with the parity-safe CUDA compute mode described
-below.
+Python Flow/VAE decoder bridge are implemented. The native Flow/VAE renderer is
+not ported in v0.1. The real-F16 numerical and frozen exact-greedy parity gates
+pass with the parity-safe CUDA compute mode described below.
 
 ## Environment baseline
 
@@ -87,6 +87,9 @@ below.
 
 - Embedded the full Qwen2 byte-level BPE inventory and JSON configuration in
   GGUF; generation has no external tokenizer path.
+- Vendored the llama.cpp Unicode regex splitter and utf8proc NFC normalization;
+  ten representative tokenizer conformance cases match the pinned
+  Transformers tokenizer exactly.
 - Reproduced all four fixed `[952,1536]` conditional/null main/detail prefix
   tensors exactly against official Python (`max_abs_error = 0`).
 - Added persistent backend-resident K/V caches for both towers and separate
@@ -97,8 +100,9 @@ below.
   per-stream EOS state, earliest-EOS trim, progress reporting, and self-validating
   int32 `[3,T]` NPY/JSON output.
 - CPU CTest is 10/10; the CUDA suite adds a real RTX 4090 backend test and is
-  11/11. Python lightweight tests are 4 passed with the heavyweight decoder
-  test skipped by default.
+  11/11. Python lightweight tests are 4 passed with two real-asset tests
+  skipped by default; the tokenizer conformance and heavyweight decoder tests
+  both pass when explicitly enabled.
 - A real two-frame greedy C++ CUDA smoke completed in 15.44 seconds and wrote
   valid tokens. The 250-frame delay makes even short requests execute 252
   delayed steps.
@@ -109,11 +113,16 @@ below.
   `model_septoken/model_2.safetensors`, 675 MB VAE checkpoint/config, and the
   required upstream `stable_audio_tools`/Demucs import sources. No encoder,
   ContentVec, mixed renderer, or Demucs weights are required.
-- A complete sampled 30-second generation using seed 1234 finished in 35.74 s,
-  produced a valid `[3,750]` tensor with no EOS/special IDs, and used at most
-  10,332 MiB GPU memory in polling. The production 50-step official decoder
-  finished in 30.41 s and peaked at 13,918 MiB. Its WAV is exactly
-  `(1,440,000,2)` at 48 kHz, finite, non-silent (RMS `0.29216`), and 30.0 s.
+- A final complete sampled 30-second generation using seed 1234 and a two-section
+  verse/chorus fixture produced a valid `[3,750]` tensor with no EOS/special
+  IDs. Its NPY file SHA-256 is
+  `0bb58d470184788369b02d816d68136c83ca733af848e4710b9e73b3617b08ed`.
+  The production 50-step official decoder finished in 29.944 s. Its WAV is
+  exactly `(1,440,000,2)` at 48 kHz, finite, non-silent (RMS `0.32711`), and
+  30.0 s, with SHA-256
+  `62f6255a4fee435439db7bfbfb8f7a46f1de47f6ae59f506523b4cd54b827660`.
+  Full-window polling observed peaks of 10,332 MiB for C++ generation and
+  13,918 MiB for the official decoder on the RTX 4090.
 
 ### Real-F16 parity gate
 
@@ -139,6 +148,25 @@ below.
   `0.99999583`.
 - This is an official GGML runtime switch, not a local GGML patch. The frozen
   thresholds were not changed, and the final greedy equality gate passes.
+
+The frozen generation fixture is lyrics `[verse] Hello world.` with style
+`female, pop`. C++ and the official Python oracle are exactly equal at 2.0 s
+(`[3,50]`), 10.08 s (`[3,252]`), and 30 s (`[3,750]`). The raw tensor SHA-256
+values are, respectively,
+`f57268812d4befe556a2b8ee54afae70b657c997616f3b959d7fc5add7ef737a`,
+`6f83f15e1ad5815ff215e00ef7c016bf858432a681127f0b9ee28178848dfc98`, and
+`95adbd38aeee3188f9a2bd1a770eba3587af7af2ef7fbc7103644a53dda466b0`.
+The split prefix/KV-decode strategy is used for this parity run because the
+upstream combines prefix and BOS in one first call; the split preserves the
+same sequence while avoiding a kernel-boundary numerical difference. Python
+generation for 30 s took 75.054 s to load and 30.738 s to generate (108.095 s
+wall time); the C++ run took 52.408 s.
+
+An exploratory multilingual 10.08-second input had exactly matching
+conditioning tensors and tokenizer IDs but diverged at near-tied greedy logits
+(mixed frame 64, vocal frame 0, accompaniment frame 3). This known
+cross-library floating-point limitation does not weaken the frozen release
+thresholds.
 
 ## Deviations from plan
 
