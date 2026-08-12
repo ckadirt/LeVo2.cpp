@@ -168,6 +168,15 @@ conditioning tensors and tokenizer IDs but diverged at near-tied greedy logits
 cross-library floating-point limitation does not weaken the frozen release
 thresholds.
 
+### Release publication
+
+- Final implementation commit: `1f3df56` (`fix: close LeLM parity and
+  tokenizer gates`), pushed to `origin/main`.
+- The public F16 artifact is hosted at `ckadirt/LeVo2-GGUF`, immutable revision
+  `3df87c4dd2b32e7c8f89caa6af534585cffda894`.
+- The public repository reports the exact 5,467,925,728-byte LFS object and
+  SHA-256 `b765d0e79f17cf05c0acdc6cef8bfcd072104adfd8357bb0470f5b9ae91d9e64`.
+
 ## Deviations from plan
 
 The released checkpoint has a pre-existing style-conditioner packaging
