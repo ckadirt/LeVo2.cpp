@@ -294,6 +294,7 @@ std::string render_manifest(const std::filesystem::path & wav_path,
         << "    \"flow\": {\n"
         << "      \"name\": " << json_escape(source.flow_model_name) << ",\n"
         << "      \"model_sha256\": " << json_escape(source.flow_model_sha256) << ",\n"
+        << "      \"artifact_sha256\": " << json_escape(source.flow_artifact_sha256) << ",\n"
         << "      \"levo_revision\": " << json_escape(source.flow_levo_revision) << ",\n"
         << "      \"runtime_revision\": " << json_escape(source.flow_runtime_revision) << "\n"
         << "    },\n"
@@ -301,6 +302,7 @@ std::string render_manifest(const std::filesystem::path & wav_path,
         << "      \"name\": " << json_escape(source.vae_model_name) << ",\n"
         << "      \"checkpoint_sha256\": " << json_escape(source.vae_checkpoint_sha256) << ",\n"
         << "      \"config_sha256\": " << json_escape(source.vae_config_sha256) << ",\n"
+        << "      \"artifact_sha256\": " << json_escape(source.vae_artifact_sha256) << ",\n"
         << "      \"levo_revision\": " << json_escape(source.vae_levo_revision) << ",\n"
         << "      \"runtime_revision\": " << json_escape(source.vae_runtime_revision) << "\n"
         << "    }\n"
@@ -383,6 +385,7 @@ render_result render_tokens_to_audio(const render_config & config,
         provenance.flow_model_name = source.name;
         provenance.flow_levo_revision = source.levo_revision;
         provenance.flow_model_sha256 = source.model_sha256;
+        provenance.flow_artifact_sha256 = source.artifact_sha256;
         provenance.flow_runtime_revision = source.runtime_revision;
         resolved_steps = resolved_steps == 0 ? static_cast<std::size_t>(model->hparams().euler_steps_default) : resolved_steps;
         resolved_cfg = resolved_cfg == 0.0F ? model->hparams().cfg_default : resolved_cfg;
@@ -424,6 +427,7 @@ render_result render_tokens_to_audio(const render_config & config,
         provenance.vae_model_name = source.name;
         provenance.vae_checkpoint_sha256 = source.checkpoint_sha256;
         provenance.vae_config_sha256 = source.config_sha256;
+        provenance.vae_artifact_sha256 = source.artifact_sha256;
         provenance.vae_levo_revision = source.levo_revision;
         provenance.vae_runtime_revision = source.runtime_revision;
         const detail::vae_hparams & hp = model->hparams();

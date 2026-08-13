@@ -211,10 +211,12 @@ struct render_provenance {
     std::string flow_model_name;
     std::string flow_levo_revision;
     std::string flow_model_sha256;
+    std::string flow_artifact_sha256;
     std::string flow_runtime_revision;
     std::string vae_model_name;
     std::string vae_checkpoint_sha256;
     std::string vae_config_sha256;
+    std::string vae_artifact_sha256;
     std::string vae_levo_revision;
     std::string vae_runtime_revision;
     uint64_t seed = 0;

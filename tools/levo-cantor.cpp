@@ -24,9 +24,12 @@
 
 namespace {
 
-constexpr std::array<char, 8> lm_magic{{'L', 'E', 'V', 'O', 'L', 'M', '0', '1'}};
-constexpr std::array<char, 8> flow_magic{{'L', 'E', 'V', 'O', 'F', 'L', '0', '1'}};
-constexpr std::array<char, 8> latent_magic{{'L', 'E', 'V', 'O', 'L', 'T', '0', '1'}};
+constexpr std::array<char, 8> lm_magic{{'L', 'E', 'V', 'O', 'L', 'M', '0', '2'}};
+constexpr std::array<char, 8> flow_magic{{'L', 'E', 'V', 'O', 'F', 'L', '0', '2'}};
+constexpr std::array<char, 8> latent_magic{{'L', 'E', 'V', 'O', 'L', 'T', '0', '2'}};
+constexpr std::array<char, 8> lm_magic_v1{{'L', 'E', 'V', 'O', 'L', 'M', '0', '1'}};
+constexpr std::array<char, 8> flow_magic_v1{{'L', 'E', 'V', 'O', 'F', 'L', '0', '1'}};
+constexpr std::array<char, 8> latent_magic_v1{{'L', 'E', 'V', 'O', 'L', 'T', '0', '1'}};
 
 struct options {
     std::filesystem::path input;
@@ -113,6 +116,9 @@ cantor_stage stage_for(const std::vector<std::uint8_t> & bytes) {
     if (has_magic(bytes, lm_magic)) return CANTOR_STAGE_CODES;
     if (has_magic(bytes, flow_magic)) return CANTOR_STAGE_DIFFUSE;
     if (has_magic(bytes, latent_magic)) return CANTOR_STAGE_DECODE;
+    if (has_magic(bytes, lm_magic_v1) || has_magic(bytes, flow_magic_v1) || has_magic(bytes, latent_magic_v1)) {
+        fail("checkpoint format 01 predates artifact identity; restart from the original request or durable CODES boundary");
+    }
     return CANTOR_STAGE_CODES;
 }
 

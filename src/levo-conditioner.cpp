@@ -1,9 +1,13 @@
 #include "levo-conditioner.h"
 
+#include "levo-quantization.h"
+
+#include "ggml-alloc.h"
 #include "ggml-backend.h"
 
 #include <algorithm>
 #include <limits>
+#include <memory>
 #include <sstream>
 #include <stdexcept>
 #include <utility>
@@ -32,23 +36,20 @@ const char * structure_names[] = {
     throw std::runtime_error("LeVo conditioner: " + message);
 }
 
-std::size_t element_count(const ggml_tensor * tensor) {
-    if (tensor == nullptr) {
-        fail("null tensor");
-    }
-    std::size_t count = 1;
-    for (int i = 0; i < GGML_MAX_DIMS; ++i) {
-        if (tensor->ne[i] <= 0 ||
-            static_cast<uint64_t>(tensor->ne[i]) > std::numeric_limits<std::size_t>::max() / count) {
-            fail("tensor has invalid dimensions");
-        }
-        count *= static_cast<std::size_t>(tensor->ne[i]);
-    }
-    return count;
-}
+struct context_deleter {
+    void operator()(ggml_context * context) const noexcept { if (context) ggml_free(context); }
+};
+struct buffer_deleter {
+    void operator()(ggml_backend_buffer_t buffer) const noexcept { if (buffer) ggml_backend_buffer_free(buffer); }
+};
+struct allocator_deleter {
+    void operator()(ggml_gallocr_t allocator) const noexcept { if (allocator) ggml_gallocr_free(allocator); }
+};
+using context_ptr = std::unique_ptr<ggml_context, context_deleter>;
+using buffer_ptr = std::unique_ptr<ggml_backend_buffer, buffer_deleter>;
+using allocator_ptr = std::unique_ptr<ggml_gallocr, allocator_deleter>;
 
-std::vector<float> read_f32(const model & weights, const char * name,
-                            int64_t width, int64_t rows) {
+ggml_tensor * checked_embedding(const model & weights, const char * name, int64_t width, int64_t rows) {
     ggml_tensor * tensor = weights.tensor(name);
     if (tensor == nullptr) {
         fail(std::string("missing tensor '") + name + "'");
@@ -64,18 +65,61 @@ std::vector<float> read_f32(const model & weights, const char * name,
             fail(std::string("tensor '") + name + "' must be rank two");
         }
     }
-    const std::size_t count = element_count(tensor);
+    if (tensor->type != GGML_TYPE_F32 && tensor->type != GGML_TYPE_F16 && !quantization::is_quantized(tensor->type)) {
+        fail(std::string("tensor '") + name + "' has an unsupported embedding type");
+    }
+    return tensor;
+}
+
+std::vector<float> read_rows_f32(const model & weights, const char * name,
+                                 int64_t width, int64_t rows,
+                                 const std::vector<int64_t> & ids) {
+    if (ids.empty()) return {};
+    ggml_tensor * tensor = checked_embedding(weights, name, width, rows);
+    for (const int64_t id : ids) if (id < 0 || id >= rows) fail(std::string("row index is outside tensor '") + name + "'");
+    const std::size_t count = static_cast<std::size_t>(width) * ids.size();
     std::vector<float> result(count);
     if (tensor->type == GGML_TYPE_F32) {
-        ggml_backend_tensor_get(tensor, result.data(), 0, count * sizeof(float));
+        for (std::size_t index = 0; index < ids.size(); ++index) {
+            ggml_backend_tensor_get(tensor, result.data() + index * static_cast<std::size_t>(width),
+                                    static_cast<std::size_t>(ids[index]) * static_cast<std::size_t>(width) * sizeof(float),
+                                    static_cast<std::size_t>(width) * sizeof(float));
+        }
     } else if (tensor->type == GGML_TYPE_F16) {
-        std::vector<ggml_fp16_t> values(count);
-        ggml_backend_tensor_get(tensor, values.data(), 0, count * sizeof(ggml_fp16_t));
-        for (std::size_t i = 0; i < count; ++i) {
-            result[i] = ggml_fp16_to_fp32(values[i]);
+        std::vector<ggml_fp16_t> values(static_cast<std::size_t>(width));
+        for (std::size_t index = 0; index < ids.size(); ++index) {
+            ggml_backend_tensor_get(tensor, values.data(),
+                                    static_cast<std::size_t>(ids[index]) * static_cast<std::size_t>(width) * sizeof(ggml_fp16_t),
+                                    values.size() * sizeof(ggml_fp16_t));
+            for (std::size_t column = 0; column < values.size(); ++column) {
+                result[index * values.size() + column] = ggml_fp16_to_fp32(values[column]);
+            }
         }
     } else {
-        fail(std::string("tensor '") + name + "' is not F32/F16");
+        context_ptr graph_context(ggml_init({16U * ggml_tensor_overhead() + ggml_graph_overhead_custom(16, false), nullptr, true}));
+        context_ptr input_context(ggml_init({ggml_tensor_overhead(), nullptr, true}));
+        if (!graph_context || !input_context) fail("cannot create quantized conditioner graph context");
+        ggml_cgraph * graph = ggml_new_graph_custom(graph_context.get(), 16, false);
+        if (!graph) fail("cannot create quantized conditioner graph");
+        ggml_tensor * row_ids = ggml_new_tensor_1d(input_context.get(), GGML_TYPE_I32, static_cast<int64_t>(ids.size()));
+        if (!row_ids) fail("cannot create quantized conditioner row IDs");
+        ggml_set_input(row_ids);
+        buffer_ptr input_buffer(ggml_backend_alloc_ctx_tensors(input_context.get(), weights.backend()));
+        if (!input_buffer) fail("cannot allocate quantized conditioner row IDs");
+        std::vector<int32_t> ids_i32(ids.begin(), ids.end());
+        ggml_backend_tensor_set(row_ids, ids_i32.data(), 0, ids_i32.size() * sizeof(int32_t));
+        ggml_tensor * gathered = ggml_get_rows(graph_context.get(), tensor, row_ids);
+        if (!gathered || gathered->type != GGML_TYPE_F32 || gathered->ne[0] != width || gathered->ne[1] != static_cast<int64_t>(ids.size())) {
+            fail(std::string("GGML cannot gather F32 rows from quantized tensor '") + name + "'");
+        }
+        ggml_set_output(gathered);
+        ggml_build_forward_expand(graph, gathered);
+        allocator_ptr allocator(ggml_gallocr_new(ggml_backend_get_default_buffer_type(weights.backend())));
+        if (!allocator || !ggml_gallocr_alloc_graph(allocator.get(), graph)) fail("cannot allocate quantized conditioner graph");
+        if (ggml_backend_graph_compute(weights.backend(), graph) != GGML_STATUS_SUCCESS) {
+            fail(std::string("GGML quantized conditioner graph failed for '") + name + "'");
+        }
+        ggml_backend_tensor_get(gathered, result.data(), 0, result.size() * sizeof(float));
     }
     return result;
 }
@@ -122,12 +166,6 @@ condition_tensor text_condition(const model & weights, const ByteLevelBPETokeniz
                                 bool structures) {
     const int64_t width = weights.hparams().embedding_length;
     const int64_t vocab = structures ? 151659 : 151652;
-    const bool source_f16 = weights.tensor(embedding)->type == GGML_TYPE_F16;
-    const std::vector<float> content = read_f32(weights, embedding, width, vocab);
-    std::vector<float> structure;
-    if (structures) {
-        structure = read_f32(weights, kStructureWeights, width, 200);
-    }
     padded_text padded = padded_tokens(tokenizer, text, prefix);
     const std::vector<int64_t> & ids = padded.ids;
     std::vector<int64_t> range(ids.size(), 0);
@@ -150,6 +188,10 @@ condition_tensor text_condition(const model & weights, const ByteLevelBPETokeniz
                       range.begin() + static_cast<std::ptrdiff_t>(end), row);
         }
     }
+    const bool source_f16 = weights.tensor(embedding)->type == GGML_TYPE_F16;
+    const std::vector<float> content = read_rows_f32(weights, embedding, width, vocab, ids);
+    const std::vector<float> structure = structures
+        ? read_rows_f32(weights, kStructureWeights, width, 200, range) : std::vector<float>{};
     condition_tensor result;
     result.width = static_cast<int32_t>(width);
     result.prefix = prefix;
@@ -160,10 +202,9 @@ condition_tensor text_condition(const model & weights, const ByteLevelBPETokeniz
             fail("text token ID is outside conditioner embedding");
         }
         for (int32_t d = 0; d < width; ++d) {
-            float value = content[static_cast<std::size_t>(token) * static_cast<std::size_t>(width) + d];
+            float value = content[static_cast<std::size_t>(t) * static_cast<std::size_t>(width) + d];
             if (structures && range[static_cast<std::size_t>(t)] != 0) {
-                const int64_t row = range[static_cast<std::size_t>(t)];
-                const float addition = structure[static_cast<std::size_t>(row) * static_cast<std::size_t>(width) + d];
+                const float addition = structure[static_cast<std::size_t>(t) * static_cast<std::size_t>(width) + d];
                 value = source_f16 ? f16_add(value, addition) : value + addition;
             }
             result.values[static_cast<std::size_t>(t) * static_cast<std::size_t>(width) + d] = value;
@@ -187,11 +228,14 @@ condition_pair make_branch(const model & weights, const ByteLevelBPETokenizer & 
     }
     const int32_t frames = prompt_length - 2;
     const int64_t input_vocab = hp.token_input_size();
-    const std::vector<float> mixed = read_f32(weights, kPromptMixedWeights, width, input_vocab);
-    const std::vector<float> vocal = read_f32(weights, kPromptVocalWeights, width, input_vocab);
-    const std::vector<float> bgm = read_f32(weights, kPromptBgmWeights, width, input_vocab);
-    const std::vector<float> eot_mixed = read_f32(weights, kPromptEotMixed, width, 1);
-    const std::vector<float> eot_detail = read_f32(weights, kPromptEotDetail, width, 1);
+    const int64_t special = hp.special_token_id;
+    const std::vector<int64_t> special_row{special};
+    const std::vector<int64_t> eot_row{0};
+    const std::vector<float> mixed = read_rows_f32(weights, kPromptMixedWeights, width, input_vocab, special_row);
+    const std::vector<float> vocal = read_rows_f32(weights, kPromptVocalWeights, width, input_vocab, special_row);
+    const std::vector<float> bgm = read_rows_f32(weights, kPromptBgmWeights, width, input_vocab, special_row);
+    const std::vector<float> eot_mixed = read_rows_f32(weights, kPromptEotMixed, width, 1, eot_row);
+    const std::vector<float> eot_detail = read_rows_f32(weights, kPromptEotDetail, width, 1, eot_row);
     const bool prompt_f16 = weights.tensor(kPromptVocalWeights)->type == GGML_TYPE_F16;
     condition_tensor prompt_main{static_cast<int32_t>(width), prompt_length,
                                  std::vector<float>(static_cast<std::size_t>(width) * prompt_length)};
@@ -205,14 +249,12 @@ condition_pair make_branch(const model & weights, const ByteLevelBPETokenizer & 
     // the entire stream when frame zero is special; for an all-special null
     // prompt this overwrites that EOS too. Both conditional and CFG-null
     // branches therefore contain EOT followed by 251 special-token frames.
-    const int64_t special = hp.special_token_id;
     for (int32_t t = 0; t < frames + 1; ++t) {
-        const int64_t token = special;
         for (int32_t d = 0; d < width; ++d) {
             const std::size_t at = static_cast<std::size_t>(t + 1) * width + d;
-            prompt_main.values[at] = mixed[static_cast<std::size_t>(token) * width + d];
-            const float vocal_value = vocal[static_cast<std::size_t>(token) * width + d];
-            const float bgm_value = bgm[static_cast<std::size_t>(token) * width + d];
+            prompt_main.values[at] = mixed[static_cast<std::size_t>(d)];
+            const float vocal_value = vocal[static_cast<std::size_t>(d)];
+            const float bgm_value = bgm[static_cast<std::size_t>(d)];
             prompt_detail.values[at] = prompt_f16 ? f16_add(vocal_value, bgm_value)
                                                    : vocal_value + bgm_value;
         }

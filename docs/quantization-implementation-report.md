@@ -125,6 +125,32 @@ the digest from the GGUF bytes rather than trusting a sidecar.
   finite stereo IEEE-F32 WAV at 48 kHz with exactly 2.0 seconds of audio;
   SHA-256 `b0475936c0498564800448d3d91acc6993f90b34f31096e7919a3ecb40d3f322`.
 - Full portable CTest after the change: 28/28 passed.
+
+### 2026-08-13 — first real LeLM/CUDA pass and checkpoint identity
+
+- The first real LeLM Q8_0 CUDA smoke initially exposed a missed boundary:
+  the conditioner copied whole F32/F16 embeddings directly from the backend.
+  That cannot dequantize a native GGML embedding. The conditioner now performs
+  a small `ggml_get_rows` graph for quantized weights and retains the exact
+  direct F32/F16 path. It gathers only requested rows, so it also eliminates
+  unnecessary host copies of the 151k-row conditioner tables.
+- Local, unpublished LeLM Q8_0 artifact:
+  `LeVo2-v2-medium-Q8_0.gguf`, 2,909,949,120 bytes,
+  SHA-256 `706cd0b3fcb84c7d4522745331e679114a288deab5dfcad37d546ebb6d002291`.
+  It contains 84 F32 vectors and 296 Q8_0 matrices. Its sidecar checksum
+  passed.
+- On RTX 4090/CUDA, the LeLM Q8_0 artifact completed a 2-second greedy lyrics
+  generation as a valid `[3,50]` token artifact. The token payload SHA-256 is
+  `cdf7c375e7f3cf236dc7fcefa2f1e5cee57b62ce9406a045c2f08b655f57bb7c`;
+  the artifact manifest records the loaded GGUF SHA-256.
+- The local Flow Q8_0 artifact also rendered the frozen 2-second fixture on
+  RTX 4090/CUDA through F32 VAE, yielding finite 48 kHz stereo PCM-F32 audio
+  with SHA-256 `44dbf4c4c02074dbc249462b1f72a5eacb80b6e74451061408c762d3c35580b7`.
+- Cantor checkpoint magics advance to `LEVOLM02`, `LEVOFL02`, and `LEVOLT02`.
+  Each new LeLM/Flow stamp includes the complete GGUF digest; Flow additionally
+  stamps the selected VAE artifact so DECODE refuses a different waveform
+  decoder. `01` blobs are rejected explicitly because their source provenance
+  cannot distinguish quantization artifacts.
 - Pending before publication: complete CPU/CUDA render smoke, then the frozen
   render matrix and actual quality measurements. The artifact remains local
   until those gates pass.

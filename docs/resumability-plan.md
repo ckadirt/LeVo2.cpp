@@ -4,11 +4,11 @@
 
 In progress. The foundation slice and the first runnable stage have landed:
 the shared engine now advertises `CANTOR_STAGE_CODES` and
-`CANTOR_STAGE_DIFFUSE`. `LEVOLM01` records a canonical resolved request,
+`CANTOR_STAGE_DIFFUSE`. `LEVOLM02` records a canonical resolved request,
 delayed IDs, sampler cursor, redundant EOS state, next-logit digest, and strict
-model/backend stamps; it rebuilds K/V sequentially on resume. `LEVOFL01`
+model/backend/artifact stamps; it rebuilds K/V sequentially on resume. `LEVOFL02`
 records exact Flow noise, completed raw windows, and an active Euler tensor;
-`LEVOLT01` is the durable completed-Flow boundary. `DECODE` consumes that
+`LEVOLT02` is the durable completed-Flow boundary. `DECODE` consumes that
 boundary, returns planar audio, and pauses without a replacement blob; CLI
 checkpoint adapters are not wired yet.
 
@@ -138,9 +138,9 @@ envelopes. Use distinct eight-byte ASCII magics:
 
 | Blob | Magic | Purpose |
 |---|---|---|
-| paused LeLM | `LEVOLM01` | resume `CODES` |
-| paused Flow | `LEVOFL01` | resume `DIFFUSE` |
-| completed Flow | `LEVOLT01` | durable input to `DECODE` |
+| paused LeLM | `LEVOLM02` | resume `CODES` |
+| paused Flow | `LEVOFL02` | resume `DIFFUSE` |
+| completed Flow | `LEVOLT02` | durable input to `DECODE` |
 
 No valid fresh JSON request can begin with these prefixes. Resume detection is
 therefore a prefix sniff; there is no external `resuming` flag.
@@ -302,20 +302,20 @@ payload before observing another cancel boundary. Later windows recover their
 between windows therefore has one unambiguous representation and does not
 require a separate state variant.
 
-On `CANTOR_DONE`, emit `LEVOLT01`: source/schedule metadata plus every
+On `CANTOR_DONE`, emit `LEVOLT02`: source/schedule metadata plus every
 denormalized `[1000,64]` window. A simple assembled `[T,64]` tensor is not a
 sufficient LeVo stage boundary because the official VAE path decodes the
 original overlapping windows and crossfades audio afterward.
 
 ## VAE and audio stage
 
-The completed `LEVOLT01` Flow blob is the durable boundary for `DECODE`.
+The completed `LEVOLT02` Flow blob is the durable boundary for `DECODE`.
 Initially, cancellation during VAE decode returns `CANTOR_PAUSED` with a null
 blob. The host retains/reuses the prior completed Flow checkpoint and reruns the
 whole decode stage. This mirrors ACE-Step and avoids checkpointing tens to more
 than 100 MB of partially decoded PCM.
 
-The null blob is safe only because `LEVOLT01` is complete, self-validating, and
+The null blob is safe only because `LEVOLT02` is complete, self-validating, and
 persisted as `Done` before `DECODE` begins. Document this explicitly in the ABI
 guide and exercise the host fallback path in an integration test.
 
@@ -427,7 +427,7 @@ multiple pauses.
 After the engine contract works, expose the same machinery without requiring a
 daemon:
 
-- `levo-cli --checkpoint FILE` atomically writes a paused `LEVOLM01` blob on
+- `levo-cli --checkpoint FILE` atomically writes a paused `LEVOLM02` blob on
   SIGINT/SIGTERM; `levo-cli --resume FILE` needs only model/backend selection and
   output location;
 - `levo-render --checkpoint FILE` writes paused Flow state or the durable
@@ -459,7 +459,7 @@ recorded in `docs/implementation_report.md` before proceeding.
    CPU/CUDA final token payloads byte-for-byte with uninterrupted baselines.
 4. **Make Euler and window rendering resumable.** Accept a starting
    `(window,step,state)`, retain completed windows and exact noise, encode
-   `LEVOFL01`, and emit durable `LEVOLT01` on completion.
+   `LEVOFL02`, and emit durable `LEVOLT02` on completion.
 5. **Prove Flow resume.** Pause at every synthetic Euler boundary and selected
    real one-/multi-window boundaries, including repeated cross-process pauses.
    Require byte-identical final window latents on the same backend and loud

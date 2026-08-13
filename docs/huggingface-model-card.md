@@ -58,9 +58,11 @@ Generate tokens and render them without Python:
 ```
 
 The renderer writes stereo 48 kHz IEEE-F32 WAV and crops output to exactly
-`token_frames * 1920` samples per channel. Flow/VAE execution is F32-only for
-v0.2; F16 renderer artifacts are deliberately not published without a separate
-precision/quality gate.
+`token_frames * 1920` samples per channel. The v0.2 baseline Flow/VAE artifacts
+remain F32. The post-v0.2 catalog adds explicitly selected Q8_0, Q6_K, Q5_K_M,
+and Q4_K_M Flow variants after their individual validation gates; VAE remains
+F32 until its separate F16 waveform gate passes. See the source project's
+quantization implementation report for the current publication state.
 
 ## Provenance
 

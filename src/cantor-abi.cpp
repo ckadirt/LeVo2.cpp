@@ -38,9 +38,12 @@ struct cantor_ctx {
 
 namespace {
 
-constexpr std::array<char, 8> lm_magic{{'L', 'E', 'V', 'O', 'L', 'M', '0', '1'}};
-constexpr std::array<char, 8> flow_magic{{'L', 'E', 'V', 'O', 'F', 'L', '0', '1'}};
-constexpr std::array<char, 8> latent_magic{{'L', 'E', 'V', 'O', 'L', 'T', '0', '1'}};
+constexpr std::array<char, 8> lm_magic{{'L', 'E', 'V', 'O', 'L', 'M', '0', '2'}};
+constexpr std::array<char, 8> flow_magic{{'L', 'E', 'V', 'O', 'F', 'L', '0', '2'}};
+constexpr std::array<char, 8> latent_magic{{'L', 'E', 'V', 'O', 'L', 'T', '0', '2'}};
+constexpr std::array<char, 8> lm_magic_v1{{'L', 'E', 'V', 'O', 'L', 'M', '0', '1'}};
+constexpr std::array<char, 8> flow_magic_v1{{'L', 'E', 'V', 'O', 'F', 'L', '0', '1'}};
+constexpr std::array<char, 8> latent_magic_v1{{'L', 'E', 'V', 'O', 'L', 'T', '0', '1'}};
 
 struct backend_deleter {
     void operator()(ggml_backend_t backend) const noexcept {
@@ -234,6 +237,7 @@ std::string take_string(const std::vector<std::uint8_t> & source, std::size_t * 
 struct lm_stamp {
     std::string backend;
     std::string model_sha256;
+    std::string artifact_sha256;
     std::string runtime_revision;
     std::string tokenizer_sha256;
 };
@@ -242,7 +246,7 @@ std::vector<std::uint8_t> encode_lm_metadata(const levo::detail::generation_resu
                                              const lm_stamp & stamp) {
     std::vector<std::uint8_t> result;
     result.reserve(3U * 8U + 3U + state.next_logits_digest.size() + 4U * 4U +
-                   stamp.backend.size() + stamp.model_sha256.size() + stamp.runtime_revision.size() + stamp.tokenizer_sha256.size());
+                   stamp.backend.size() + stamp.model_sha256.size() + stamp.artifact_sha256.size() + stamp.runtime_revision.size() + stamp.tokenizer_sha256.size());
     append_u64(result, state.sampler_seed);
     append_u64(result, state.sampler_draws);
     append_u64(result, state.earliest_eos);
@@ -250,6 +254,7 @@ std::vector<std::uint8_t> encode_lm_metadata(const levo::detail::generation_resu
     result.insert(result.end(), state.next_logits_digest.begin(), state.next_logits_digest.end());
     append_string(result, stamp.backend);
     append_string(result, stamp.model_sha256);
+    append_string(result, stamp.artifact_sha256);
     append_string(result, stamp.runtime_revision);
     append_string(result, stamp.tokenizer_sha256);
     return result;
@@ -278,6 +283,7 @@ std::pair<levo::detail::generation_resume_state, lm_stamp> decode_lm_metadata(
     offset += state.next_logits_digest.size();
     stamp.backend = take_string(source, &offset);
     stamp.model_sha256 = take_string(source, &offset);
+    stamp.artifact_sha256 = take_string(source, &offset);
     stamp.runtime_revision = take_string(source, &offset);
     stamp.tokenizer_sha256 = take_string(source, &offset);
     if (offset != source.size()) throw std::runtime_error("trailing LeLM checkpoint metadata bytes");
@@ -328,7 +334,7 @@ std::uint64_t resolve_seed() {
 }
 
 lm_stamp stamp_from_result(const levo::generation_result & result) {
-    return {result.backend_name, result.model_sha256, result.runtime_revision, result.tokenizer_sha256};
+    return {result.backend_name, result.model_sha256, result.model_artifact_sha256, result.runtime_revision, result.tokenizer_sha256};
 }
 
 void validate_stamp(const lm_stamp & expected, const levo::generation_result & actual) {
@@ -337,9 +343,9 @@ void validate_stamp(const lm_stamp & expected, const levo::generation_result & a
         throw std::runtime_error("cannot resume: blob was paused on backend '" + expected.backend +
                                  "', this engine runs on '" + have.backend + "'");
     }
-    if (expected.model_sha256 != have.model_sha256 || expected.runtime_revision != have.runtime_revision ||
+    if (expected.model_sha256 != have.model_sha256 || expected.artifact_sha256 != have.artifact_sha256 || expected.runtime_revision != have.runtime_revision ||
         expected.tokenizer_sha256 != have.tokenizer_sha256) {
-        throw std::runtime_error("cannot resume: LeLM model/runtime/tokenizer stamp differs from the paused run");
+        throw std::runtime_error("cannot resume: LeLM artifact/model/runtime/tokenizer stamp differs from the paused run");
     }
 }
 
@@ -362,6 +368,8 @@ struct flow_stamp {
     std::string backend;
     std::string token_sha256;
     std::string model_sha256;
+    std::string artifact_sha256;
+    std::string vae_artifact_sha256;
     std::string runtime_revision;
 };
 
@@ -382,7 +390,7 @@ struct flow_metadata {
 std::vector<std::uint8_t> encode_flow_metadata(const flow_metadata & value) {
     std::vector<std::uint8_t> result;
     result.reserve(8U * 8U + 5U + value.stamp.backend.size() + value.stamp.token_sha256.size() + value.stamp.model_sha256.size() +
-                   value.stamp.runtime_revision.size());
+                   value.stamp.artifact_sha256.size() + value.stamp.vae_artifact_sha256.size() + value.stamp.runtime_revision.size());
     append_size(result, value.source_frames, "Flow source frame count");
     append_size(result, value.padded_frames, "Flow padded frame count");
     append_size(result, value.window_count, "Flow window count");
@@ -396,6 +404,8 @@ std::vector<std::uint8_t> encode_flow_metadata(const flow_metadata & value) {
     append_string(result, value.stamp.backend);
     append_string(result, value.stamp.token_sha256);
     append_string(result, value.stamp.model_sha256);
+    append_string(result, value.stamp.artifact_sha256);
+    append_string(result, value.stamp.vae_artifact_sha256);
     append_string(result, value.stamp.runtime_revision);
     return result;
 }
@@ -417,6 +427,8 @@ flow_metadata decode_flow_metadata(const std::vector<std::uint8_t> & source) {
     result.stamp.backend = take_string(source, &offset);
     result.stamp.token_sha256 = take_string(source, &offset);
     result.stamp.model_sha256 = take_string(source, &offset);
+    result.stamp.artifact_sha256 = take_string(source, &offset);
+    result.stamp.vae_artifact_sha256 = take_string(source, &offset);
     result.stamp.runtime_revision = take_string(source, &offset);
     if (offset != source.size()) throw std::runtime_error("trailing Flow checkpoint metadata bytes");
     if (result.source_frames == 0 || result.window_count == 0 || result.euler_steps == 0 ||
@@ -431,21 +443,24 @@ flow_metadata decode_flow_metadata(const std::vector<std::uint8_t> & source) {
 }
 
 flow_stamp flow_stamp_from(ggml_backend_t backend, const levo::flow::flow_provenance & provenance,
-                           const std::string & token_sha256) {
-    return {ggml_backend_name(backend), token_sha256, provenance.model_sha256, provenance.runtime_revision};
+                           const std::string & token_sha256, const std::string & vae_artifact_sha256) {
+    return {ggml_backend_name(backend), token_sha256, provenance.model_sha256, provenance.artifact_sha256,
+            vae_artifact_sha256, provenance.runtime_revision};
 }
 
 void validate_flow_stamp(const flow_stamp & expected, ggml_backend_t backend,
                          const levo::flow::flow_provenance & provenance,
-                         const std::string & token_sha256) {
-    const flow_stamp actual = flow_stamp_from(backend, provenance, token_sha256);
+                         const std::string & token_sha256, const std::string & vae_artifact_sha256) {
+    const flow_stamp actual = flow_stamp_from(backend, provenance, token_sha256, vae_artifact_sha256);
     if (expected.backend != actual.backend) {
         throw std::runtime_error("cannot resume: blob was paused on backend '" + expected.backend +
                                  "', this engine runs on '" + actual.backend + "'");
     }
     if (expected.token_sha256 != actual.token_sha256 || expected.model_sha256 != actual.model_sha256 ||
+        expected.artifact_sha256 != actual.artifact_sha256 ||
+        expected.vae_artifact_sha256 != actual.vae_artifact_sha256 ||
         expected.runtime_revision != actual.runtime_revision) {
-        throw std::runtime_error("cannot resume: Flow model/runtime stamp differs from the paused run");
+        throw std::runtime_error("cannot resume: Flow artifact/model/runtime stamp differs from the paused run");
     }
 }
 
@@ -455,6 +470,10 @@ cantor_status run_codes(cantor_ctx * context, const std::uint8_t * input, std::s
     if (context->lm_path.empty()) {
         set_error(CANTOR_ERR_MODEL, "[LeVo ABI] CODES requires an lm component");
         return CANTOR_ERR;
+    }
+    if (input_size >= lm_magic_v1.size() &&
+        std::equal(lm_magic_v1.begin(), lm_magic_v1.end(), reinterpret_cast<const char *>(input))) {
+        throw std::runtime_error("LEVOLM01 checkpoints predate artifact identity; restart CODES from the original request");
     }
     bool resuming = input_size > lm_magic.size() &&
                     std::equal(lm_magic.begin(), lm_magic.end(), reinterpret_cast<const char *>(input));
@@ -502,7 +521,8 @@ cantor_status run_codes(cantor_ctx * context, const std::uint8_t * input, std::s
 
     if (result.paused) {
         const lm_stamp stamp = stamp_from_result(result.result);
-        if (stamp.backend.empty() || stamp.model_sha256.empty() || stamp.runtime_revision.empty() || stamp.tokenizer_sha256.empty()) {
+        if (stamp.backend.empty() || stamp.model_sha256.empty() || stamp.artifact_sha256.empty() ||
+            stamp.runtime_revision.empty() || stamp.tokenizer_sha256.empty()) {
             throw std::runtime_error("cannot create a LeLM checkpoint without full model provenance");
         }
         const std::vector<levo::checkpoint::section> sections{
@@ -600,6 +620,14 @@ cantor_status run_flow(cantor_ctx * context, const std::uint8_t * input, std::si
         set_error(CANTOR_ERR_MODEL, "[LeVo ABI] DIFFUSE requires a dit component");
         return CANTOR_ERR;
     }
+    if (context->vae_path.empty()) {
+        set_error(CANTOR_ERR_MODEL, "[LeVo ABI] DIFFUSE requires a vae component to stamp its durable decode boundary");
+        return CANTOR_ERR;
+    }
+    if (input_size >= flow_magic_v1.size() &&
+        std::equal(flow_magic_v1.begin(), flow_magic_v1.end(), reinterpret_cast<const char *>(input))) {
+        throw std::runtime_error("LEVOFL01 checkpoints predate artifact identity; restart DIFFUSE from the CODES boundary");
+    }
     const bool resuming = input_size > flow_magic.size() &&
         std::equal(flow_magic.begin(), flow_magic.end(), reinterpret_cast<const char *>(input));
     levo::engine_request::request request;
@@ -687,6 +715,8 @@ cantor_status run_flow(cantor_ctx * context, const std::uint8_t * input, std::si
         throw std::runtime_error("Flow request resolves to invalid Euler settings");
     }
     const std::string token_sha256 = levo::token_io::tensor_sha256(tokens);
+    const std::string vae_artifact_sha256 = levo::token_io::file_sha256(context->vae_path);
+    if (vae_artifact_sha256.empty()) throw std::runtime_error("cannot calculate VAE artifact digest");
     if (resuming) {
         if (saved_metadata.source_frames != frame_count || saved_metadata.padded_frames != schedule.padded_frames ||
             saved_metadata.window_count != schedule.windows.size() || saved_metadata.completed_windows != saved_resume.completed_windows.size()) {
@@ -695,7 +725,7 @@ cantor_status run_flow(cantor_ctx * context, const std::uint8_t * input, std::si
         if (saved_resume.active_window && saved_resume.active_euler.normalized_state.size() != per_window) {
             throw std::runtime_error("Flow checkpoint Euler tensor has an unexpected shape");
         }
-        validate_flow_stamp(saved_metadata.stamp, backend.get(), model->provenance(), token_sha256);
+        validate_flow_stamp(saved_metadata.stamp, backend.get(), model->provenance(), token_sha256, vae_artifact_sha256);
     }
 
     levo::flow::render_input flow_input;
@@ -719,7 +749,7 @@ cantor_status run_flow(cantor_ctx * context, const std::uint8_t * input, std::si
     levo::flow::resumable_render_output result = renderer.render_resumable(
         flow_input, options, resuming ? &saved_resume : nullptr);
 
-    const flow_stamp stamp = flow_stamp_from(backend.get(), model->provenance(), token_sha256);
+    const flow_stamp stamp = flow_stamp_from(backend.get(), model->provenance(), token_sha256, vae_artifact_sha256);
     const auto metadata_for = [&](const std::vector<levo::flow::latent_window> & completed,
                                   bool active, std::size_t active_index, std::size_t active_steps) {
         flow_metadata metadata;
@@ -801,9 +831,13 @@ cantor_status run_decode(cantor_ctx * context, const std::uint8_t * input, std::
         set_error(CANTOR_ERR_MODEL, "[LeVo ABI] DECODE requires a vae component");
         return CANTOR_ERR;
     }
+    if (input_size >= latent_magic_v1.size() &&
+        std::equal(latent_magic_v1.begin(), latent_magic_v1.end(), reinterpret_cast<const char *>(input))) {
+        throw std::runtime_error("LEVOLT01 checkpoints predate artifact identity; restart DIFFUSE from the CODES boundary");
+    }
     if (input_size <= latent_magic.size() ||
         !std::equal(latent_magic.begin(), latent_magic.end(), reinterpret_cast<const char *>(input))) {
-        throw std::runtime_error("DECODE expects a completed LEVOLT01 Flow boundary");
+        throw std::runtime_error("DECODE expects a completed LEVOLT02 Flow boundary");
     }
     const auto blob = levo::checkpoint::decode(input, input_size, latent_magic);
     if (blob.stage != CANTOR_STAGE_DIFFUSE || blob.sections.size() != 4U) {
@@ -834,6 +868,12 @@ cantor_status run_decode(cantor_ctx * context, const std::uint8_t * input, std::
     if (!backend) throw std::runtime_error("cannot initialize VAE backend");
     const std::shared_ptr<levo::detail::vae_model> model = levo::detail::vae_model::load_gguf(
         context->vae_path, {backend.get(), true, false, true});
+    if (model->provenance().artifact_sha256.empty()) {
+        throw std::runtime_error("VAE artifact digest is unavailable");
+    }
+    if (metadata.stamp.vae_artifact_sha256 != model->provenance().artifact_sha256) {
+        throw std::runtime_error("cannot DECODE: VAE artifact stamp differs from the completed Flow boundary");
+    }
     const levo::detail::vae_hparams & hp = model->hparams();
     if (hp.sample_rate != static_cast<int32_t>(levo::renderer_sample_rate) || hp.audio_channels != 2 ||
         hp.latent_dim != 64 || hp.downsampling_ratio != static_cast<int32_t>(levo::renderer_samples_per_frame)) {

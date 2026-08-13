@@ -5,6 +5,11 @@
 > It uses a commit-and-push-per-validated-slice workflow and will be folded
 > into this historical report when the catalog is complete.
 
+> Quantization addendum (current `main`): checkpoint blobs now use the `02`
+> magics and bind pause/resume to complete loaded GGUF hashes. Historical `01`
+> blobs remain valid evidence for the prior runtime but are deliberately
+> rejected by the current runtime because they lack artifact identity.
+
 ## Status
 
 The v0.1 LeLM implementation is complete: strict GGUF conversion/loading,

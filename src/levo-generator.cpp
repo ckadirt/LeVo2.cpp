@@ -561,6 +561,7 @@ void write_generation_artifact(const std::filesystem::path & output_path,
     metadata.model_name = result.model_name.empty() ? config.model_path.filename().string() : result.model_name;
     metadata.model_revision = result.model_revision;
     metadata.model_sha256 = result.model_sha256;
+    metadata.model_artifact_sha256 = result.model_artifact_sha256;
     metadata.generator = "levo.cpp";
     metadata.generator_revision = version();
     metadata.runtime_revision = result.runtime_revision;

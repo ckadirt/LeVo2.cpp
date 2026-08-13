@@ -26,6 +26,7 @@ struct artifact_metadata {
     std::string model_name;
     std::string model_revision;
     std::string model_sha256;
+    std::string model_artifact_sha256;
     std::string generator;
     std::string generator_revision;
     std::string runtime_revision;

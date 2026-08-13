@@ -78,6 +78,7 @@ struct vae_provenance {
     std::string ggml_revision;
     std::string checkpoint_sha256;
     std::string config_sha256;
+    std::string artifact_sha256;
 };
 
 struct vae_model_load_options {

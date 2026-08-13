@@ -1,5 +1,7 @@
 #include "levo-vae-model.h"
 
+#include "levo-token-io.h"
+
 #include "gguf.h"
 
 #include <algorithm>
@@ -312,7 +314,8 @@ std::shared_ptr<vae_model> vae_model::load_gguf(const std::string & path, const 
     if (gguf_get_version(gguf.get()) != GGUF_VERSION || gguf_get_n_tensors(gguf.get()) <= 0) fail("unsupported or empty GGUF");
     validate_file_bounds(gguf.get(), file_size);
     const vae_hparams hparams = parse_hparams(gguf.get());
-    const vae_provenance provenance = parse_provenance(gguf.get(), options.require_pinned_provenance);
+    vae_provenance provenance = parse_provenance(gguf.get(), options.require_pinned_provenance);
+    provenance.artifact_sha256 = token_io::file_sha256(path);
     (void) validate_inventory(gguf.get(), hparams);
 
     const auto result = std::shared_ptr<vae_model>(new vae_model());
