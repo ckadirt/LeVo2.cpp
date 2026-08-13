@@ -57,7 +57,9 @@ void append_model_row(std::vector<float> & destination, const conditioning_outpu
 std::vector<float> solve_flow_euler(const euler_input & input, std::size_t steps,
                                     const velocity_callback & velocity,
                                     const euler_progress_callback & progress,
-                                    const cancellation_callback & cancelled) {
+                                    const cancellation_callback & cancelled,
+                                    const euler_resume_state * resume,
+                                    euler_resume_state * checkpoint) {
     if (steps == 0) fail("Euler step count must be positive");
     if (!velocity) fail("Euler velocity callback is required");
     const std::size_t elements = element_count(input.frames, input.latent_dim, "Euler state");
@@ -69,9 +71,24 @@ std::vector<float> solve_flow_euler(const euler_input & input, std::size_t steps
     require_finite(input.initial_noise, "Euler noise");
     require_finite(input.normalized_incontext, "Euler in-context latent");
 
-    const float dt = 1.0F / static_cast<float>(steps);
+    std::size_t completed_steps = 0;
     std::vector<float> state = input.initial_noise;
-    for (std::size_t step = 0; step < steps; ++step) {
+    if (resume) {
+        if (resume->completed_steps > steps) fail("Euler resume step exceeds total steps");
+        if (resume->normalized_state.size() != elements) {
+            fail("Euler resume state has an unexpected shape");
+        }
+        require_finite(resume->normalized_state, "Euler resume state");
+        completed_steps = resume->completed_steps;
+        state = resume->normalized_state;
+    }
+    if (checkpoint) {
+        checkpoint->completed_steps = completed_steps;
+        checkpoint->normalized_state = state;
+    }
+
+    const float dt = 1.0F / static_cast<float>(steps);
+    for (std::size_t step = completed_steps; step < steps; ++step) {
         if (cancelled && cancelled()) throw operation_cancelled();
         const float time = static_cast<float>(step) * dt;
         const float noise_scale = 1.0F - (1.0F - input.sigma_min) * time;
@@ -87,10 +104,18 @@ std::vector<float> solve_flow_euler(const euler_input & input, std::size_t steps
         require_finite(current_velocity, "Euler velocity");
         for (std::size_t element = 0; element < elements; ++element) state[element] += dt * current_velocity[element];
         require_finite(state, "Euler state");
+        if (checkpoint) {
+            checkpoint->completed_steps = step + 1U;
+            checkpoint->normalized_state = state;
+        }
         if (progress) progress(step + 1U, steps);
     }
     const std::size_t context_elements = input.incontext_frames * input.latent_dim;
     std::copy_n(input.normalized_incontext.begin(), context_elements, state.begin());
+    if (checkpoint) {
+        checkpoint->completed_steps = steps;
+        checkpoint->normalized_state = state;
+    }
     return state;
 }
 

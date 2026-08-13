@@ -1,13 +1,17 @@
 add_executable(test-backend-smoke test-backend-smoke.cpp)
 target_link_libraries(test-backend-smoke PRIVATE levo::core)
 
+add_executable(test-cantor-abi test-cantor-abi.c)
+target_link_libraries(test-cantor-abi PRIVATE levo::cantor-engine)
+add_test(NAME cantor-abi COMMAND test-cantor-abi)
+
 add_test(NAME backend-smoke-cpu COMMAND test-backend-smoke cpu)
 if(GGML_CUDA)
     add_test(NAME backend-smoke-cuda COMMAND test-backend-smoke cuda)
     set_tests_properties(backend-smoke-cuda PROPERTIES LABELS "cuda")
 endif()
 
-foreach(test_name IN ITEMS model lm kv conditioner flow-model flow-conditioning cuda-precision flow-estimator flow-renderer generation pattern renderer-pattern render sampling tokenizer token-io audio-ops vae-model vae wav progress)
+foreach(test_name IN ITEMS checkpoint model lm kv conditioner flow-model flow-conditioning cuda-precision flow-estimator flow-renderer generation pattern renderer-pattern render sampling tokenizer token-io audio-ops vae-model vae wav progress)
     add_executable(test-${test_name} test-${test_name}.cpp)
     target_link_libraries(test-${test_name} PRIVATE levo::core)
     target_include_directories(test-${test_name} PRIVATE ${PROJECT_SOURCE_DIR}/src)

@@ -322,3 +322,27 @@ and the local GGML CPU abort callback will be evaluated for long graph latency.
 
 This planning change does not alter inference code, formats, tests, or release
 artifacts. Implementation and validation have not started.
+
+### Resumability implementation trace
+
+- Foundation slice: added a C-compatible `cantor_engine.h` and a hidden-symbol
+  `liblevo-cantor-engine` target. All ABI symbols are present and pure-C loading,
+  error, ownership, and discovery paths are tested. Until the LeLM stage is
+  wired it honestly reports an empty stage mask and rejects execution rather
+  than advertising a partial feature.
+- Added the common self-identifying binary blob envelope. It uses explicit
+  little-endian fields, a checked section directory, exact length/overflow/
+  overlap validation, a 2 GiB ceiling, and standard SHA-256 with the digest
+  field zeroed while hashing. Asset-free tests cover successful round trip,
+  known SHA-256 output, wrong magic, truncation, and corruption.
+- `Sampler` now records its exact raw `mt19937_64` draw cursor and restores from
+  seed plus `discard(cursor)`. Sampling, greedy no-draw, and mixed raw draws are
+  covered by continuation tests.
+- Flow's fixed-step Euler primitive now exposes a completed-step/normalized-
+  state boundary. Fresh behavior is unchanged; restarting at every synthetic
+  step is exact and malformed resume states are rejected.
+
+The first slice is intentionally infrastructure only: no request parser,
+model-context reuse, serialized LeLM state, Flow window checkpoint, VAE pause,
+or CLI flag has landed. Existing user-facing cancellation behavior remains
+unchanged.

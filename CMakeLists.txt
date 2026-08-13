@@ -28,6 +28,7 @@ find_package(Threads REQUIRED)
 
 add_library(levo-core STATIC
     src/levo-audio-ops.cpp
+    src/levo-checkpoint.cpp
     src/levo-conditioner.cpp
     src/levo-cuda-precision.cpp
     src/levo-flow-conditioning.cpp
@@ -53,6 +54,18 @@ add_library(levo-core STATIC
     third_party/utf8proc/utf8proc.c
 )
 add_library(levo::core ALIAS levo-core)
+
+add_library(levo-cantor-engine SHARED src/cantor-abi.cpp)
+add_library(levo::cantor-engine ALIAS levo-cantor-engine)
+target_link_libraries(levo-cantor-engine PRIVATE levo::core)
+target_include_directories(levo-cantor-engine
+    PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+)
+target_compile_definitions(levo-cantor-engine PRIVATE CANTOR_ENGINE_BUILD LEVO_VERSION="${PROJECT_VERSION}")
+set_target_properties(levo-cantor-engine PROPERTIES
+    CXX_VISIBILITY_PRESET hidden
+    VISIBILITY_INLINES_HIDDEN YES
+)
 
 target_include_directories(levo-core
     PUBLIC
@@ -108,7 +121,7 @@ if(LEVO_BUILD_PARITY_TOOLS)
     target_include_directories(levo-render-parity PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 endif()
 
-set_target_properties(levo-core levo-cli levo-render PROPERTIES
+set_target_properties(levo-core levo-cli levo-render levo-cantor-engine PROPERTIES
     ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib"
     LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib"
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"

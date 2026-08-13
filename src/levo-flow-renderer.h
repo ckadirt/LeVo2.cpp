@@ -29,6 +29,15 @@ using velocity_callback = std::function<std::vector<float>(
 using euler_progress_callback = std::function<void(
         std::size_t completed_steps, std::size_t total_steps)>;
 
+// Durable Euler boundary.  `normalized_state` is the post-update state at
+// `completed_steps`; it is intentionally small enough to serialize in a
+// pause checkpoint.  The solver rebuilds no hidden multistep history because
+// this renderer uses fixed-step Euler.
+struct euler_resume_state {
+    std::size_t completed_steps = 0;
+    std::vector<float> normalized_state;
+};
+
 // Fixed-step Euler with the official in-context interpolation and final hard
 // context restore.  `velocity` receives the state after interpolation at each
 // t in {0, 1/steps, ..., (steps-1)/steps}.
@@ -37,7 +46,9 @@ using euler_progress_callback = std::function<void(
         std::size_t steps,
         const velocity_callback & velocity,
         const euler_progress_callback & progress = {},
-        const cancellation_callback & cancelled = {});
+        const cancellation_callback & cancelled = {},
+        const euler_resume_state * resume = nullptr,
+        euler_resume_state * checkpoint = nullptr);
 
 // One denormalized [window_frames, latent_dim] Flow result. The input frame
 // offset identifies the corresponding repeated/padded token window. The

@@ -2,7 +2,10 @@
 
 ## Status
 
-Proposed implementation contract. No resumability code has landed yet.
+In progress. The first foundation slice has landed: a checked binary envelope,
+full loadable Cantor ABI surface (with no runnable stage advertised yet), a
+portable LeLM sampler cursor, and an exact resumable-Euler primitive. The next
+slice wires these into `CODES`; no user-visible resume operation exists yet.
 
 This plan was prepared from the current LeVo2.cpp `main` at commit `12a1253`
 and the local ACE-Step reference at commit `79994ed` (whose staged-engine merge

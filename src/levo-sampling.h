@@ -39,6 +39,12 @@ class Sampler {
 public:
     explicit Sampler(uint64_t seed = 0);
     void seed(uint64_t seed);
+    // Number of raw mt19937_64 values consumed since the last seed/restore.
+    // This is deliberately a cursor, rather than an implementation-specific
+    // serialization of the engine state, so a checkpoint can restore it with
+    // the resolved seed and discard(draw_count).
+    uint64_t draw_count() const noexcept { return draws_; }
+    void restore(uint64_t seed, uint64_t draw_count);
     uint64_t uniform_bits();
     double uniform01();
 
@@ -50,6 +56,7 @@ public:
 
 private:
     std::mt19937_64 engine_;
+    uint64_t draws_ = 0;
 };
 
 // Stateless convenience entry point with explicit RNG, useful for tests.

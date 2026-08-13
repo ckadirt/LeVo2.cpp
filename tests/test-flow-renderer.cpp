@@ -63,6 +63,49 @@ int main() {
     assert(close(solved[0], 4.0F) && close(solved[1], 8.0F));
     assert(close(solved[2], 11.0F) && close(solved[3], 21.0F));
     assert(close(solved[4], 31.0F) && close(solved[5], 41.0F));
+
+    // Every completed Euler step is a durable restart boundary.  Pausing at
+    // each boundary and rebuilding from the saved state must be bit-exact
+    // with the uninterrupted solve.
+    for (std::size_t pause_at = 0; pause_at < 2; ++pause_at) {
+        euler_resume_state checkpoint;
+        std::size_t polls = 0;
+        bool paused = false;
+        try {
+            (void) solve_flow_euler(
+                input, 2,
+                [](const std::vector<float> & state, float) {
+                    return std::vector<float>(state.size(), 1.0F);
+                }, {},
+                [&polls, pause_at] { return polls++ >= pause_at; },
+                nullptr, &checkpoint);
+        } catch (const levo::operation_cancelled &) {
+            paused = true;
+        }
+        assert(paused && checkpoint.completed_steps == pause_at);
+        const std::vector<float> resumed = solve_flow_euler(
+            input, 2,
+            [](const std::vector<float> & state, float) {
+                return std::vector<float>(state.size(), 1.0F);
+            }, {}, {}, &checkpoint);
+        assert(resumed == solved);
+        assert(checkpoint.completed_steps == 2 && checkpoint.normalized_state == solved);
+    }
+
+    euler_resume_state invalid{3, std::vector<float>(input.initial_noise.size(), 0.0F)};
+    expect_throw([&] {
+        (void) solve_flow_euler(input, 2,
+                                [](const auto & state, float) {
+                                    return std::vector<float>(state.size(), 1.0F);
+                                }, {}, {}, &invalid);
+    });
+    invalid = euler_resume_state{1, {}};
+    expect_throw([&] {
+        (void) solve_flow_euler(input, 2,
+                                [](const auto & state, float) {
+                                    return std::vector<float>(state.size(), 1.0F);
+                                }, {}, {}, &invalid);
+    });
     expect_throw([&] { (void) solve_flow_euler(input, 0, [](const auto &, float) { return std::vector<float>{}; }); });
 
     // Cancellation is checked before every expensive velocity evaluation and

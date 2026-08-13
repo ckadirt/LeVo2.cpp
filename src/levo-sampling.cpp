@@ -9,10 +9,11 @@
 namespace levo {
 namespace {
 
-double manual_uniform(std::mt19937_64 & rng) {
+double manual_uniform(std::mt19937_64 & rng, uint64_t * draws = nullptr) {
     // 53 random bits gives the same precision as a conventional double. The
     // half-unit offset avoids ever returning exactly zero or one.
     constexpr double denom = 9007199254740992.0; // 2^53
+    if (draws) ++*draws;
     return (static_cast<double>(rng() >> 11) + 0.5) / denom;
 }
 
@@ -54,12 +55,25 @@ logits apply_unique_token_repetition_penalty(const logits & stream_logits,
 }
 
 Sampler::Sampler(uint64_t seed) : engine_(seed) {}
-void Sampler::seed(uint64_t seed) { engine_.seed(seed); }
-uint64_t Sampler::uniform_bits() { return engine_(); }
-double Sampler::uniform01() { return manual_uniform(engine_); }
+void Sampler::seed(uint64_t seed) {
+    engine_.seed(seed);
+    draws_ = 0;
+}
+void Sampler::restore(uint64_t seed, uint64_t draw_count) {
+    engine_.seed(seed);
+    engine_.discard(draw_count);
+    draws_ = draw_count;
+}
+uint64_t Sampler::uniform_bits() {
+    ++draws_;
+    return engine_();
+}
+double Sampler::uniform01() { return manual_uniform(engine_, &draws_); }
 
-int64_t sample_top_k(const logits & input, std::size_t top_k, float temperature,
-                     bool use_sampling, std::mt19937_64 & rng) {
+namespace {
+
+int64_t sample_top_k_counted(const logits & input, std::size_t top_k, float temperature,
+                             bool use_sampling, std::mt19937_64 & rng, uint64_t * draws) {
     if (input.empty()) throw std::invalid_argument("cannot sample an empty vocabulary");
     if (!std::isfinite(temperature) || temperature < 0.0F) throw std::invalid_argument("temperature must be finite and non-negative");
     std::vector<std::size_t> candidates(input.size());
@@ -92,7 +106,7 @@ int64_t sample_top_k(const logits & input, std::size_t top_k, float temperature,
         total += weights[n];
     }
     if (!(total > 0.0) || !std::isfinite(total)) return static_cast<int64_t>(best);
-    const double target = manual_uniform(rng) * total;
+    const double target = manual_uniform(rng, draws) * total;
     double cumulative = 0.0;
     for (std::size_t n = 0; n < weights.size(); ++n) {
         cumulative += weights[n];
@@ -101,8 +115,15 @@ int64_t sample_top_k(const logits & input, std::size_t top_k, float temperature,
     return static_cast<int64_t>(candidates.back());
 }
 
+} // namespace
+
+int64_t sample_top_k(const logits & input, std::size_t top_k, float temperature,
+                     bool use_sampling, std::mt19937_64 & rng) {
+    return sample_top_k_counted(input, top_k, temperature, use_sampling, rng, nullptr);
+}
+
 int64_t Sampler::sample(const logits & input, std::size_t top_k, float temperature, bool use_sampling) {
-    return sample_top_k(input, top_k, temperature, use_sampling, engine_);
+    return sample_top_k_counted(input, top_k, temperature, use_sampling, engine_, &draws_);
 }
 
 std::vector<int64_t> Sampler::sample_streams(const std::vector<logits> & streams,
