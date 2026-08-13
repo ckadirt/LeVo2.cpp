@@ -14,6 +14,7 @@ add_executable(test-cantor-abi test-cantor-abi.c)
 target_link_libraries(test-cantor-abi PRIVATE levo::cantor-engine)
 add_test(NAME cantor-abi COMMAND test-cantor-abi)
 add_test(NAME cantor-cli-help COMMAND $<TARGET_FILE:levo-cantor> --help)
+add_test(NAME quantizer-cli-help COMMAND $<TARGET_FILE:levo-quantize> --help)
 
 add_test(NAME backend-smoke-cpu COMMAND test-backend-smoke cpu)
 if(GGML_BACKEND_DL)

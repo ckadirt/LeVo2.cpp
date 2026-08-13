@@ -90,6 +90,9 @@ struct model_provenance {
     std::string runtime_revision;
     std::string tokenizer_revision;
     std::string tokenizer_sha256;
+    // SHA-256 of the GGUF bytes actually loaded. Source model provenance is
+    // intentionally separate: F16 and quantized artifacts share it.
+    std::string artifact_sha256;
 };
 
 struct model_hparams {
@@ -132,6 +135,7 @@ struct model_load_options {
     bool require_v2_medium = true;
     bool allow_f32 = true;
     bool allow_f16 = true;
+    bool allow_quantized = true;
 };
 
 // Owns the backend-resident weight context/buffer.  The backend itself remains

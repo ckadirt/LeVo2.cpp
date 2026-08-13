@@ -102,6 +102,10 @@ add_executable(levo-cantor tools/levo-cantor.cpp)
 target_link_libraries(levo-cantor PRIVATE levo::cantor-engine levo::core)
 target_include_directories(levo-cantor PRIVATE ${PROJECT_SOURCE_DIR}/tools)
 
+add_executable(levo-quantize tools/levo-quantize.cpp)
+target_link_libraries(levo-quantize PRIVATE levo::core)
+target_include_directories(levo-quantize PRIVATE ${PROJECT_SOURCE_DIR}/src)
+
 if(LEVO_BUILD_PARITY_TOOLS)
     add_executable(levo-parity tools/levo-parity.cpp)
     target_link_libraries(levo-parity PRIVATE levo::core)
@@ -126,7 +130,7 @@ if(LEVO_BUILD_PARITY_TOOLS)
     target_include_directories(levo-render-parity PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 endif()
 
-set_target_properties(levo-core levo-cli levo-render levo-cantor levo-cantor-engine PROPERTIES
+set_target_properties(levo-core levo-cli levo-render levo-cantor levo-quantize levo-cantor-engine PROPERTIES
     ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib"
     LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib"
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"

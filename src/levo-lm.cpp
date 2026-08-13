@@ -1,5 +1,7 @@
 #include "levo-lm.h"
 
+#include "levo-quantization.h"
+
 #include "ggml-alloc.h"
 
 #include <algorithm>
@@ -69,7 +71,9 @@ void require_shape(const ggml_tensor * tensor, const std::string & name,
             fail(message.str());
         }
     }
-    if (tensor->type != GGML_TYPE_F32 && tensor->type != GGML_TYPE_F16) {
+    const bool matrix = expected.size() >= 2;
+    if (tensor->type != GGML_TYPE_F32 && tensor->type != GGML_TYPE_F16 &&
+        !(matrix && quantization::is_quantized(tensor->type))) {
         fail("tensor '" + name + "' has an unsupported type");
     }
 }

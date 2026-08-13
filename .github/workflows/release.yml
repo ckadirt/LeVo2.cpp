@@ -111,6 +111,7 @@ jobs:
           build/bin/levo-cli --smoke cpu
           build/bin/levo-render --help >/dev/null
           build/bin/levo-cantor --help >/dev/null
+          build/bin/levo-quantize --help >/dev/null
           test "$(nm -D --defined-only build/lib/liblevo-cantor-engine.so | awk '{print $3}' | grep -c '^cantor_engine_' || true)" -eq 13
 
       - name: Package a relocatable archive
@@ -128,14 +129,14 @@ jobs:
           stage="dist/${root}"
           mkdir -p "${stage}/bin" "${stage}/lib"
 
-          install -m 0755 build/bin/levo-cli build/bin/levo-render build/bin/levo-cantor "${stage}/bin/"
+          install -m 0755 build/bin/levo-cli build/bin/levo-render build/bin/levo-cantor build/bin/levo-quantize "${stage}/bin/"
           cp -a build/lib/liblevo-cantor-engine.so* "${stage}/lib/"
           find build/ggml/src -maxdepth 1 \( -type f -o -type l \) \( -name 'libggml.so*' -o -name 'libggml-base.so*' \) -exec cp -a {} "${stage}/lib/" \;
           # ggml loads backend plugins by scanning the executable directory.
           find build/bin -maxdepth 1 \( -type f -o -type l \) -name 'libggml-*.so*' -exec cp -a {} "${stage}/bin/" \;
           install -m 0644 LICENSE THIRD_PARTY_NOTICES.md README.md "${stage}/"
 
-          for executable in "${stage}/bin/levo-cli" "${stage}/bin/levo-render" "${stage}/bin/levo-cantor"; do
+          for executable in "${stage}/bin/levo-cli" "${stage}/bin/levo-render" "${stage}/bin/levo-cantor" "${stage}/bin/levo-quantize"; do
             patchelf --set-rpath '$ORIGIN/../lib' "${executable}"
           done
           find "${stage}/lib" -type f -name '*.so*' -print0 | xargs -0 -r -n1 patchelf --set-rpath '$ORIGIN'
@@ -144,6 +145,7 @@ jobs:
           env -u LD_LIBRARY_PATH "${stage}/bin/levo-cli" --smoke cpu
           env -u LD_LIBRARY_PATH "${stage}/bin/levo-render" --help >/dev/null
           env -u LD_LIBRARY_PATH "${stage}/bin/levo-cantor" --help >/dev/null
+          env -u LD_LIBRARY_PATH "${stage}/bin/levo-quantize" --help >/dev/null
           ! readelf -d "${stage}/bin/levo-cantor" | grep -F "${GITHUB_WORKSPACE}/build"
 
           tar -C dist -czf "${archive}" "${root}"

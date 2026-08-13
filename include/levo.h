@@ -124,6 +124,7 @@ struct generation_result {
     std::string model_name;
     std::string model_revision;
     std::string model_sha256;
+    std::string model_artifact_sha256;
     std::string runtime_revision;
     std::string tokenizer_revision;
     std::string tokenizer_sha256;

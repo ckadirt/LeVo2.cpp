@@ -49,6 +49,7 @@ struct flow_provenance {
     std::string ggml_revision;
     std::string model_sha256;
     std::string parameter_dtype;
+    std::string artifact_sha256;
 };
 
 struct tensor_data {
@@ -61,6 +62,7 @@ struct load_options {
     bool require_pinned_runtime = true;
     bool allow_f32 = true;
     bool allow_f16 = true;
+    bool allow_quantized = true;
 };
 
 // The Flow model owns only backend-resident tensors.  It has no graph or

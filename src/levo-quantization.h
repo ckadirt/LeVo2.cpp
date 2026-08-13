@@ -124,6 +124,11 @@ inline int64_t padded_input_columns(int64_t columns, ggml_type type) {
     return ((columns + block - 1) / block) * block;
 }
 
+inline std::string flow_padded_input_layout(profile value) {
+    return "hidden=2200->" + std::to_string(padded_input_columns(2200, base_type(value))) +
+           ";intermediate=4400->" + std::to_string(padded_input_columns(4400, base_type(value)));
+}
+
 inline bool is_hex_sha256(const std::string & value) {
     return value.size() == 64 && std::all_of(value.begin(), value.end(), [](unsigned char character) {
         return (character >= '0' && character <= '9') ||

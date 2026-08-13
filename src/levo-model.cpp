@@ -1,5 +1,8 @@
 #include "levo-model.h"
 
+#include "levo-quantization.h"
+#include "levo-token-io.h"
+
 #include "gguf.h"
 
 #include <algorithm>
@@ -9,6 +12,7 @@
 #include <fstream>
 #include <limits>
 #include <memory>
+#include <optional>
 #include <sstream>
 #include <stdexcept>
 #include <unordered_set>
@@ -193,7 +197,31 @@ model_hparams parse_hparams(const gguf_context * context) {
     return hparams;
 }
 
-void validate_v2_medium(const gguf_context * context, const model_hparams & hparams) {
+std::optional<quantization::profile> parse_quantization(const gguf_context * context) {
+    const int64_t profile_index = gguf_find_key(context, quantization::profile_key);
+    const int64_t policy_index = gguf_find_key(context, quantization::policy_revision_key);
+    const int64_t source_index = gguf_find_key(context, quantization::source_artifact_sha256_key);
+    const bool any = profile_index >= 0 || policy_index >= 0 || source_index >= 0;
+    if (!any) return std::nullopt;
+    if (profile_index < 0 || policy_index < 0 || source_index < 0) {
+        fail("quantized GGUF metadata is incomplete");
+    }
+    const auto profile = quantization::parse(required_string(context, quantization::profile_key));
+    if (!profile) fail("quantized GGUF has an unsupported profile");
+    if (required_string(context, quantization::policy_revision_key) != quantization::policy_revision) {
+        fail("quantized GGUF has an unsupported policy revision");
+    }
+    if (!quantization::is_hex_sha256(required_string(context, quantization::source_artifact_sha256_key))) {
+        fail("quantized GGUF source artifact digest is invalid");
+    }
+    if (required_u32(context, gguf_keys::file_type) != quantization::gguf_file_type(*profile)) {
+        fail("quantized GGUF general.file_type disagrees with its profile");
+    }
+    return profile;
+}
+
+void validate_v2_medium(const gguf_context * context, const model_hparams & hparams,
+                        const std::optional<quantization::profile> & profile) {
     const auto expect_string = [context](const char * key, const char * expected) {
         const std::string actual = required_string(context, key);
         if (actual != expected) {
@@ -239,7 +267,11 @@ void validate_v2_medium(const gguf_context * context, const model_hparams & hpar
     }
 
     const uint32_t file_type = required_u32(context, gguf_keys::file_type);
-    if (file_type != 0 && file_type != 1) {
+    if (profile) {
+        if (file_type != quantization::gguf_file_type(*profile)) {
+            fail("general.file_type does not match the declared quantization profile");
+        }
+    } else if (file_type != 0 && file_type != 1) {
         fail("general.file_type must be GGML F32 (0) or F16 (1)");
     }
 }
@@ -268,7 +300,8 @@ void validate_tensor(const gguf_context * context, const std::string & name,
     }
 }
 
-void validate_tensor_inventory(const gguf_context * context, const model_hparams & hparams) {
+void validate_tensor_inventory(const gguf_context * context, const model_hparams & hparams,
+                               const std::optional<quantization::profile> & profile) {
     const uint32_t file_type = required_u32(context, gguf_keys::file_type);
     const ggml_type type = file_type == 0 ? GGML_TYPE_F32 : GGML_TYPE_F16;
     const int64_t width = hparams.embedding_length;
@@ -276,12 +309,15 @@ void validate_tensor_inventory(const gguf_context * context, const model_hparams
     const int64_t input_vocab = hparams.token_input_size();
     const int64_t output_vocab = hparams.token_output_size();
     std::unordered_set<std::string> expected;
-    const auto add = [&expected, context, type](const std::string & name,
-                                                 std::initializer_list<int64_t> shape) {
+    const auto add = [&expected, context, type, &profile](const std::string & name,
+                                                           std::initializer_list<int64_t> shape) {
         if (!expected.emplace(name).second) {
             fail("internal duplicate expected tensor " + quote(name));
         }
-        validate_tensor(context, name, shape, type);
+        const ggml_type expected_type = profile
+            ? quantization::lelm_tensor_type(name, static_cast<int>(shape.size()), *profile)
+            : type;
+        validate_tensor(context, name, shape, expected_type);
     };
 
     add(tensor_names::mixed_embedding, {width, input_vocab});
@@ -394,8 +430,9 @@ void validate_tensor_type(const std::string & name, ggml_type type, const model_
     if (type == GGML_TYPE_F16 && options.allow_f16) {
         return;
     }
+    if (quantization::is_quantized(type) && options.allow_quantized) return;
     fail("tensor " + quote(name) + " uses unsupported type " + ggml_type_name(type) +
-         "; only F32/F16 model weights are accepted");
+         "; this runtime accepts only F32/F16 and the declared native quantization profiles");
 }
 
 void read_tensor_payloads(const std::string & path, const gguf_context * gguf,
@@ -537,9 +574,11 @@ std::shared_ptr<model> model::load_gguf(const std::string & path, const model_lo
     }
     validate_tensor_file_bounds(gguf.get(), input_size);
     const model_hparams hparams = parse_hparams(gguf.get());
+    const std::optional<quantization::profile> profile = parse_quantization(gguf.get());
     model_provenance provenance;
     provenance.name = required_string(gguf.get(), gguf_keys::name);
     provenance.model_sha256 = required_string(gguf.get(), gguf_keys::source_model_sha256);
+    provenance.artifact_sha256 = token_io::file_sha256(path);
     tokenizer_assets tokenizer;
     if (options.require_v2_medium) {
         provenance.model_repository = required_string(gguf.get(), gguf_keys::source_model_repository);
@@ -548,8 +587,8 @@ std::shared_ptr<model> model::load_gguf(const std::string & path, const model_lo
         provenance.runtime_revision = required_string(gguf.get(), gguf_keys::source_runtime_revision);
         provenance.tokenizer_revision = required_string(gguf.get(), gguf_keys::tokenizer_revision);
         provenance.tokenizer_sha256 = required_string(gguf.get(), gguf_keys::tokenizer_sha256);
-        validate_v2_medium(gguf.get(), hparams);
-        validate_tensor_inventory(gguf.get(), hparams);
+        validate_v2_medium(gguf.get(), hparams, profile);
+        validate_tensor_inventory(gguf.get(), hparams, profile);
         tokenizer = parse_tokenizer(gguf.get());
     }
 

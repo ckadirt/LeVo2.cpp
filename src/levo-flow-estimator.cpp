@@ -1,5 +1,7 @@
 #include "levo-flow-estimator.h"
 
+#include "levo-quantization.h"
+
 #include "ggml-alloc.h"
 #include "ggml-backend.h"
 #include "ggml-cpu.h"
@@ -54,8 +56,10 @@ void require_finite(const std::vector<float> & values, const char * name) {
 ggml_tensor * weight(const std::shared_ptr<const model> & model, const std::string & name) {
     ggml_tensor * tensor = model->tensor(name);
     if (!tensor) fail("missing model tensor '" + name + "'");
+    if (tensor->type == GGML_TYPE_F32) return tensor;
+    if (quantization::is_quantized(tensor->type) && quantization::flow_block_matrix(name)) return tensor;
     if (tensor->type != GGML_TYPE_F32) {
-        fail("tensor '" + name + "' is not F32; the initial estimator requires an F32 Flow GGUF");
+        fail("tensor '" + name + "' must be F32 or a declared quantized Flow block matrix");
     }
     return tensor;
 }
@@ -66,7 +70,13 @@ ggml_tensor * add_bias(ggml_context * context, ggml_tensor * value, ggml_tensor 
 
 ggml_tensor * affine(ggml_context * context, ggml_tensor * value,
                      ggml_tensor * matrix, ggml_tensor * bias) {
-    return add_bias(context, ggml_mul_mat(context, matrix, value), bias);
+    if (matrix->ne[0] < value->ne[0]) fail("matrix input width is smaller than its activation");
+    if (matrix->ne[0] == value->ne[0]) return add_bias(context, ggml_mul_mat(context, matrix, value), bias);
+    if (!quantization::is_quantized(matrix->type)) fail("only quantized Flow matrices may have padded input axes");
+    const int64_t padding = matrix->ne[0] - value->ne[0];
+    ggml_tensor * padded = ggml_pad(context, value, static_cast<int>(padding), 0, 0, 0);
+    padded = ggml_reshape_3d(context, padded, matrix->ne[0], value->ne[1], value->ne[2]);
+    return add_bias(context, ggml_mul_mat(context, matrix, padded), bias);
 }
 
 // Broadcast a [hidden] vector to an activation shaped [hidden, frames, batch].

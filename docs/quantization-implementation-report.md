@@ -97,6 +97,38 @@ the digest from the GGUF bytes rather than trusting a sidecar.
 - Pending validation: build the scaffold after loader/requantizer integration,
   then commit/push this initial documented foundation.
 
+### 2026-08-13 — native writer and runtime loading
+
+- Added `levo-quantize`, a C++17 streaming GGUF requantizer. It accepts only
+  F32/F16 LeLM and Flow input, uses `ggml_quantize_chunk`, preserves every
+  metadata field, tags the output with policy revision 1 and the complete
+  source-artifact SHA-256, and writes deterministic checksum/manifest
+  sidecars. It refuses VAE, in-place output, existing artifact names, and
+  already-quantized input.
+- Strict LeLM loading now verifies the profile's complete tensor-type routing;
+  strict Flow loading additionally verifies `MIXED` dtype and exact
+  profile-specific physical input widths. Both loaders calculate the complete
+  GGUF SHA-256 for provenance rather than trusting a sidecar.
+- Added a direct CPU GGML Q8_0 padded-matmul test. It quantizes a 32-column
+  storage row, zero-pads a six-value logical activation, and verifies the
+  logical output remains within Q8 tolerance.
+- Built the portable runtime and passed the targeted `quantization`,
+  `quantizer-cli-help`, `model`, `lm`, `kv`, and `flow-model` tests.
+- Real Flow Q8_0 smoke artifact (not published):
+  `LeVo2-v2-flow-Q8_0.gguf`, 835,813,888 bytes,
+  SHA-256 `9e27b8d060edd8b57b8c3033b14260de5cfa08cde8e3c58532a3ce439bfced3a`.
+  Its strict Flow loader test and checksum sidecar passed; inventory is 167
+  F32 tensors plus 64 Q8_0 transformer matrices, with the declared
+  `hidden=2200->2208;intermediate=4400->4416` layout.
+- The same local artifact rendered the frozen 2-second token fixture on CPU at
+  one Euler step through native quantized Flow plus F32 VAE. The result is a
+  finite stereo IEEE-F32 WAV at 48 kHz with exactly 2.0 seconds of audio;
+  SHA-256 `b0475936c0498564800448d3d91acc6993f90b34f31096e7919a3ecb40d3f322`.
+- Full portable CTest after the change: 28/28 passed.
+- Pending before publication: complete CPU/CUDA render smoke, then the frozen
+  render matrix and actual quality measurements. The artifact remains local
+  until those gates pass.
+
 ## Deviations
 
 None so far.

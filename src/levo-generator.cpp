@@ -444,6 +444,7 @@ detail::resumable_generation_result generate_tokens_resumable(
         value.model_name = model->provenance().name;
         value.model_revision = model->provenance().model_revision;
         value.model_sha256 = model->provenance().model_sha256;
+        value.model_artifact_sha256 = model->provenance().artifact_sha256;
         value.runtime_revision = model->provenance().runtime_revision;
         value.tokenizer_revision = model->provenance().tokenizer_revision;
         value.tokenizer_sha256 = model->provenance().tokenizer_sha256;

@@ -1,5 +1,8 @@
 #include "levo-flow-model.h"
 
+#include "levo-quantization.h"
+#include "levo-token-io.h"
+
 #include "gguf.h"
 
 #include <algorithm>
@@ -8,6 +11,7 @@
 #include <fstream>
 #include <limits>
 #include <memory>
+#include <optional>
 #include <sstream>
 #include <stdexcept>
 #include <unordered_set>
@@ -64,6 +68,25 @@ void equal(const char * name, float got, float wanted) {
 }
 std::string flow_key(const char * suffix) { return "levo2.flow." + std::string(suffix); }
 
+std::optional<quantization::profile> parse_quantization(const gguf_context * ctx) {
+    const int64_t profile = gguf_find_key(ctx, quantization::profile_key);
+    const int64_t policy = gguf_find_key(ctx, quantization::policy_revision_key);
+    const int64_t source = gguf_find_key(ctx, quantization::source_artifact_sha256_key);
+    const int64_t padding = gguf_find_key(ctx, quantization::flow_padded_input_key);
+    const bool any = profile >= 0 || policy >= 0 || source >= 0 || padding >= 0;
+    if (!any) return std::nullopt;
+    if (profile < 0 || policy < 0 || source < 0 || padding < 0) fail("quantized Flow metadata is incomplete");
+    const auto parsed = quantization::parse(str(ctx, quantization::profile_key));
+    if (!parsed) fail("quantized Flow profile is unsupported");
+    if (str(ctx, quantization::policy_revision_key) != quantization::policy_revision) fail("quantized Flow policy revision is unsupported");
+    if (!quantization::is_hex_sha256(str(ctx, quantization::source_artifact_sha256_key))) fail("quantized Flow source artifact digest is invalid");
+    if (u32(ctx, k_file_type) != quantization::gguf_file_type(*parsed)) fail("quantized Flow general.file_type disagrees with profile");
+    if (str(ctx, quantization::flow_padded_input_key) != quantization::flow_padded_input_layout(*parsed)) {
+        fail("quantized Flow padded-input layout is unsupported");
+    }
+    return parsed;
+}
+
 flow_hparams parse_hparams(const gguf_context * ctx) {
     if (str(ctx, k_architecture) != "levo2_flow") fail("general.architecture must be 'levo2_flow'");
     if (str(ctx, k_name).empty() || str(ctx, k_converter) != "convert_flow.py") fail("general.name must not be empty and levo2.converter must be 'convert_flow.py'");
@@ -97,7 +120,8 @@ flow_hparams parse_hparams(const gguf_context * ctx) {
     return hp;
 }
 
-void validate_pinned(const gguf_context * ctx, const flow_hparams & hp) {
+void validate_pinned(const gguf_context * ctx, const flow_hparams & hp,
+                     const std::optional<quantization::profile> & profile) {
     const auto expect = [ctx](const char * name, const char * value) {
         if (str(ctx, name) != value) fail("metadata " + quote(name) + " does not match pinned Flow source");
     };
@@ -134,12 +158,17 @@ void validate_pinned(const gguf_context * ctx, const flow_hparams & hp) {
     if (!hp.rvq_weight_norm_folded) fail("levo2.flow.rvq_weight_norm_folded must be true");
     const uint32_t file_type = u32(ctx, k_file_type);
     const std::string dtype = str(ctx, k_parameter_dtype);
-    if ((file_type == 0 && dtype != "F32") || (file_type == 1 && dtype != "F16") || (file_type != 0 && file_type != 1)) {
+    if (profile) {
+        if (file_type != quantization::gguf_file_type(*profile) || dtype != "MIXED") {
+            fail("quantized Flow general.file_type and parameter dtype disagree");
+        }
+    } else if ((file_type == 0 && dtype != "F32") || (file_type == 1 && dtype != "F16") || (file_type != 0 && file_type != 1)) {
         fail("general.file_type and levo2.flow.parameter_dtype disagree");
     }
 }
 
-void tensor(const gguf_context * ctx, const std::string & name, const std::vector<int64_t> & numpy_shape, ggml_type type,
+void tensor(const gguf_context * ctx, const std::string & name, const std::vector<int64_t> & numpy_shape,
+            ggml_type type,
             std::unordered_set<std::string> & expected) {
     if (!expected.emplace(name).second) fail("internal duplicate expected tensor " + quote(name));
     const int64_t index = gguf_find_tensor(ctx, name.c_str());
@@ -147,16 +176,26 @@ void tensor(const gguf_context * ctx, const std::string & name, const std::vecto
     if (gguf_get_tensor_type(ctx, index) != type) fail("tensor " + quote(name) + " has an inconsistent type");
     const int64_t * shape = gguf_get_tensor_ne(ctx, index);
     for (std::size_t i = 0; i < numpy_shape.size(); ++i) {
-        if (shape[i] != numpy_shape[numpy_shape.size() - 1 - i]) fail("tensor " + quote(name) + " has an unexpected shape");
+        int64_t dimension = numpy_shape[numpy_shape.size() - 1 - i];
+        if (i == 0 && quantization::flow_block_matrix(name)) {
+            dimension = quantization::padded_input_columns(dimension, type);
+        }
+        if (shape[i] != dimension) fail("tensor " + quote(name) + " has an unexpected shape");
     }
     for (std::size_t i = numpy_shape.size(); i < GGML_MAX_DIMS; ++i) if (shape[i] != 1) fail("tensor " + quote(name) + " has an unexpected rank");
 }
 
-void validate_tensors(const gguf_context * ctx, const flow_hparams & hp) {
+void validate_tensors(const gguf_context * ctx, const flow_hparams & hp,
+                      const std::optional<quantization::profile> & profile) {
     const uint32_t file_type = u32(ctx, k_file_type);
     const ggml_type type = file_type == 0 ? GGML_TYPE_F32 : GGML_TYPE_F16;
     std::unordered_set<std::string> expected;
-    const auto add = [&ctx, &expected, type](const std::string & name, std::vector<int64_t> shape) { tensor(ctx, name, shape, type, expected); };
+    const auto add = [&ctx, &expected, type, &profile](const std::string & name, std::vector<int64_t> shape) {
+        const ggml_type expected_type = profile
+            ? quantization::flow_tensor_type(name, static_cast<int>(shape.size()), *profile)
+            : type;
+        tensor(ctx, name, shape, expected_type, expected);
+    };
     for (const char * stream : {"vocal", "bgm"}) {
         const std::string root = "flow.rvq." + std::string(stream);
         add(root + ".codebook.weight", {hp.codebook_size, hp.codebook_dim});
@@ -254,19 +293,24 @@ std::shared_ptr<model> model::load_gguf(const std::string & path, const load_opt
     if (!gguf || !source) fail("cannot parse GGUF " + quote(path));
     if (gguf_get_version(gguf.get()) != GGUF_VERSION || gguf_get_n_tensors(gguf.get()) <= 0) fail("unsupported or empty GGUF");
     file_bounds(gguf.get(), file_size(path)); const flow_hparams hp = parse_hparams(gguf.get());
-    if (options.require_pinned_runtime) validate_pinned(gguf.get(), hp);
+    const std::optional<quantization::profile> profile = parse_quantization(gguf.get());
+    if (options.require_pinned_runtime) validate_pinned(gguf.get(), hp, profile);
     const uint32_t ft = u32(gguf.get(), k_file_type); const ggml_type type = ft == 0 ? GGML_TYPE_F32 : ft == 1 ? GGML_TYPE_F16 : GGML_TYPE_COUNT;
     const std::string dtype = str(gguf.get(), k_parameter_dtype);
-    if ((type == GGML_TYPE_F32 && dtype != "F32") || (type == GGML_TYPE_F16 && dtype != "F16")) fail("general.file_type and Flow parameter dtype disagree");
-    if ((type == GGML_TYPE_F32 && !options.allow_f32) || (type == GGML_TYPE_F16 && !options.allow_f16) || type == GGML_TYPE_COUNT) fail("unsupported Flow tensor type");
-    validate_tensors(gguf.get(), hp);
+    if (!profile && ((type == GGML_TYPE_F32 && dtype != "F32") || (type == GGML_TYPE_F16 && dtype != "F16"))) fail("general.file_type and Flow parameter dtype disagree");
+    if (profile) {
+        if (!options.allow_quantized || dtype != "MIXED") fail("quantized Flow tensors are disabled or malformed");
+    } else if ((type == GGML_TYPE_F32 && !options.allow_f32) || (type == GGML_TYPE_F16 && !options.allow_f16) || type == GGML_TYPE_COUNT) {
+        fail("unsupported Flow tensor type");
+    }
+    validate_tensors(gguf.get(), hp, profile);
     const auto result = std::shared_ptr<model>(new model()); result->impl_->hp = hp; result->impl_->backend = options.backend;
-    result->impl_->prov = {str(gguf.get(), k_name), str(gguf.get(), k_runtime_repo), str(gguf.get(), k_runtime_revision), str(gguf.get(), k_levo_repo), str(gguf.get(), k_levo_revision), str(gguf.get(), k_ggml_repo), str(gguf.get(), k_ggml_revision), str(gguf.get(), k_model_sha256), str(gguf.get(), k_parameter_dtype)};
+    result->impl_->prov = {str(gguf.get(), k_name), str(gguf.get(), k_runtime_repo), str(gguf.get(), k_runtime_revision), str(gguf.get(), k_levo_repo), str(gguf.get(), k_levo_revision), str(gguf.get(), k_ggml_repo), str(gguf.get(), k_ggml_revision), str(gguf.get(), k_model_sha256), str(gguf.get(), k_parameter_dtype), token_io::file_sha256(path)};
     const int64_t count = gguf_get_n_tensors(gguf.get()); if (static_cast<uint64_t>(count) > std::numeric_limits<std::size_t>::max() / ggml_tensor_overhead()) fail("tensor count overflow");
     result->impl_->context.reset(ggml_init({static_cast<std::size_t>(count) * ggml_tensor_overhead(), nullptr, true})); if (!result->impl_->context) fail("cannot create weight context");
     for (int64_t i = 0; i < count; ++i) {
         const std::string name = gguf_get_tensor_name(gguf.get(), i); const ggml_tensor * src = ggml_get_tensor(source.get(), name.c_str());
-        if (!src || src->type != type) fail("inconsistent GGUF tensor metadata");
+        if (!src || src->type != gguf_get_tensor_type(gguf.get(), i)) fail("inconsistent GGUF tensor metadata");
         ggml_tensor * dst = ggml_dup_tensor(result->impl_->context.get(), src);
         if (!dst) fail("cannot allocate tensor object");
         ggml_set_name(dst, name.c_str());
