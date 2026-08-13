@@ -3,11 +3,13 @@
 ## Status
 
 In progress. The foundation slice and the first runnable stage have landed:
-the shared engine now advertises `CANTOR_STAGE_CODES` and turns a LeLM
-cancellation into a durable `LEVOLM01` blob. It records the canonical resolved
-request, delayed IDs, sampler cursor, redundant EOS state, next-logit digest,
-and strict model/backend stamps; it rebuilds K/V sequentially on resume. Flow,
-VAE, and the CLI checkpoint adapters are not wired yet.
+the shared engine now advertises `CANTOR_STAGE_CODES` and
+`CANTOR_STAGE_DIFFUSE`. `LEVOLM01` records a canonical resolved request,
+delayed IDs, sampler cursor, redundant EOS state, next-logit digest, and strict
+model/backend stamps; it rebuilds K/V sequentially on resume. `LEVOFL01`
+records exact Flow noise, completed raw windows, and an active Euler tensor;
+`LEVOLT01` is the durable completed-Flow boundary. VAE and CLI checkpoint
+adapters are not wired yet.
 
 This plan was prepared from the current LeVo2.cpp `main` at commit `12a1253`
 and the local ACE-Step reference at commit `79994ed` (whose staged-engine merge
@@ -17,16 +19,17 @@ LeVo before implementation starts.
 
 ## Current behavior
 
-The ordinary C++/CLI generation path is **not resumable today**. The Cantor
-engine's `CODES` stage is resumable; `DIFFUSE` and `DECODE` remain unavailable.
+The ordinary C++/CLI generation/render path is **not resumable today**. The
+Cantor engine's `CODES` and `DIFFUSE` stages are resumable; `DECODE` remains
+unavailable.
 
 - The blocking `generate_tokens()` API still turns a cancellation into
   `operation_cancelled`. The staged CODES API instead preserves the delayed
   sequence, sampler/EOS state, and a replay-logit digest in a blob; K/V is
   intentionally rebuilt rather than persisted.
-- Flow polls before each 1000-frame window and Euler velocity evaluation, then
-  throws the same exception. The current normalized latent and all completed
-  windows are destroyed.
+- The ordinary Flow renderer still throws on cancellation. The staged DIFFUSE
+  path persists exact noise, each completed raw window, and the post-update
+  normalized Euler state, then reconstructs conditioning from those bytes.
 - VAE polls only between complete 1000-frame window graphs. A cancellation
   discards every decoded window.
 - The CLIs exit with status 130 and intentionally write neither partial tokens

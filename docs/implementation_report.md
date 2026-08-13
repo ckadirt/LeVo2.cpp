@@ -372,3 +372,24 @@ Flow window checkpointing, VAE pause, and CLI flags remain pending.
   error ownership, strict request rejection, pause/resume controller equality,
   and sampler continuation. Real-model CPU/CUDA cross-process equivalence is
   still a required later validation gate.
+
+### Resumability implementation trace: DIFFUSE stage
+
+- The engine now also advertises `CANTOR_STAGE_DIFFUSE`. Its fresh input is the
+  self-contained CODES completion (canonical request plus stream-major token
+  IDs and SHA-256); request JSON carries Flow seed, Euler-step, and CFG controls
+  through CODES unchanged.
+- A pause returns `LEVOFL01` with exact initial F32 noise, only completed
+  denormalized `[1000,64]` windows, and (when inside a window) the normalized
+  post-update Euler state plus its step cursor. The blob also stamps the token
+  SHA-256, resolved Flow parameters, schedule, backend, Flow model SHA-256,
+  and runtime revision. Direct CFG and Euler have no unpersisted history.
+- Resume re-derives every conditioning tensor, restores the active Euler tensor
+  at its recorded step, and derives the next-window continuation from the last
+  stored raw window. It refuses schedule, token, backend, model, or runtime
+  mismatches. A completed solve returns `LEVOLT01`, retaining only the request,
+  codes, Flow stamp/schedule, and raw overlapping windows needed by VAE.
+- Asset-free tests still cover the underlying fixed-step cursor at every Euler
+  boundary and the stage discovery/strict JSON paths. A real-model DIFFUSE
+  pause/resume parity run remains pending; it is deliberately not claimed by
+  this source-level milestone.

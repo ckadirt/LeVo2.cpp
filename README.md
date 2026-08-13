@@ -183,11 +183,11 @@ does not instantiate upstream Python model code.
 See [the execution plan](docs/plan.md), [architecture contract](docs/architecture.md),
 [parity policy](docs/parity.md), and [implementation report](docs/implementation_report.md).
 
-The shared Cantor engine currently supports cross-process pause/resume for its
-LeLM `CODES` stage; it writes a self-contained token checkpoint rather than K/V
-cache state. Flow, VAE, and CLI checkpoint adapters are still pending. The
-full staged contract, determinism rules, and remaining validation gates are in
-the [resumability plan](docs/resumability-plan.md).
+The shared Cantor engine currently supports cross-process pause/resume for
+LeLM `CODES` and Flow `DIFFUSE`: it writes self-contained token or latent
+checkpoints rather than model/KV state. VAE and CLI checkpoint adapters are
+still pending. The full staged contract, determinism rules, and remaining
+validation gates are in the [resumability plan](docs/resumability-plan.md).
 
 The native renderer has its own
 [execution plan](docs/renderer-plan.md),

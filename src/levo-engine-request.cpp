@@ -354,13 +354,9 @@ std::string sampling_json(const generation_sampling_config & sampling) {
 
 } // namespace
 
-request parse(const std::string & json) {
-    if (json.empty() || json.size() > k_max_request_bytes) {
-        fail("request must be non-empty and at most 1 MiB");
-    }
-    const value root = reader(json).parse();
+request parse_request_object(const value & root) {
     if (root.type != value::kind::object) fail("request must be a JSON object");
-    reject_unknown(root, {"lyrics", "description", "duration", "duration_seconds", "seed", "cfg_scale", "sampling"});
+    reject_unknown(root, {"lyrics", "description", "duration", "duration_seconds", "seed", "cfg_scale", "sampling", "flow"});
     if (lookup(root, "duration") != nullptr && lookup(root, "duration_seconds") != nullptr) {
         fail("use only one of duration and duration_seconds");
     }
@@ -417,6 +413,59 @@ request parse(const std::string & json) {
             }
         }
     }
+    if (const value * flow = lookup(root, "flow")) {
+        if (flow->type != value::kind::object) fail("flow must be an object");
+        reject_unknown(*flow, {"seed", "euler_steps", "cfg_scale"});
+        if (const value * item = lookup(*flow, "seed")) result.flow_seed = exact_u64(*item, "flow.seed");
+        if (const value * item = lookup(*flow, "euler_steps")) {
+            result.flow_euler_steps = exact_size(*item, "flow.euler_steps");
+        }
+        if (const value * item = lookup(*flow, "cfg_scale")) {
+            if (item->type != value::kind::number || !std::isfinite(item->number) ||
+                item->number < 0.0 || item->number > std::numeric_limits<float>::max()) {
+                fail("flow.cfg_scale must be a finite non-negative float");
+            }
+            result.flow_cfg_scale = static_cast<float>(item->number);
+        }
+    }
+    return result;
+}
+
+request parse(const std::string & json) {
+    if (json.empty() || json.size() > k_max_request_bytes) {
+        fail("request must be non-empty and at most 1 MiB");
+    }
+    return parse_request_object(reader(json).parse());
+}
+
+codes parse_codes(const std::string & json) {
+    if (json.empty() || json.size() > k_max_request_bytes) {
+        fail("CODES input must be non-empty and at most 1 MiB");
+    }
+    const value root = reader(json).parse();
+    if (root.type != value::kind::object) fail("CODES input must be a JSON object");
+    reject_unknown(root, {"audio_codes", "frame_count", "request", "token_sha256"});
+    codes result;
+    result.generation_request = parse_request_object(required(root, "request", value::kind::object));
+    if (!result.generation_request.seed_present) fail("CODES request does not contain a resolved seed");
+    result.frame_count = exact_size(required(root, "frame_count", value::kind::number), "frame_count");
+    if (result.frame_count == 0 || result.frame_count > std::numeric_limits<std::size_t>::max() / 3U) {
+        fail("CODES frame_count is invalid");
+    }
+    const value & encoded = required(root, "audio_codes", value::kind::array);
+    if (encoded.array.size() != result.frame_count * 3U) fail("CODES audio_codes is not [3,T]");
+    result.tokens.reserve(encoded.array.size());
+    for (const value & token : encoded.array) {
+        const std::uint64_t id = exact_u64(token, "audio_codes[]");
+        if (id > static_cast<std::uint64_t>(std::numeric_limits<std::int32_t>::max())) {
+            fail("CODES token is outside int32 range");
+        }
+        result.tokens.push_back(static_cast<std::int32_t>(id));
+    }
+    result.token_sha256 = required(root, "token_sha256", value::kind::string).string;
+    if (result.token_sha256 != token_io::tensor_sha256(result.tokens)) {
+        fail("CODES token_sha256 does not match audio_codes");
+    }
     return result;
 }
 
@@ -426,6 +475,9 @@ std::string serialize(const request & value) {
     out << "{\"cfg_scale\":" << number(value.cfg_scale)
         << ",\"description\":" << escape(value.description)
         << ",\"duration_seconds\":" << number(value.duration_seconds)
+        << ",\"flow\":{\"cfg_scale\":" << number(value.flow_cfg_scale)
+        << ",\"euler_steps\":" << value.flow_euler_steps
+        << ",\"seed\":" << value.flow_seed << '}'
         << ",\"lyrics\":" << escape(value.lyrics)
         << ",\"sampling\":" << sampling_json(value.sampling)
         << ",\"seed\":" << value.seed << '}';

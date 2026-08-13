@@ -7,7 +7,7 @@
 int main(void) {
     assert(cantor_engine_abi_version() == CANTOR_ENGINE_ABI);
     assert(strcmp(cantor_engine_model(), "levo2") == 0);
-    assert(cantor_engine_stages() == (1U << CANTOR_STAGE_CODES));
+    assert(cantor_engine_stages() == ((1U << CANTOR_STAGE_CODES) | (1U << CANTOR_STAGE_DIFFUSE)));
 
     cantor_component component = { "lm", "placeholder.gguf" };
     cantor_ctx * context = cantor_engine_load(&component, 1, NULL);

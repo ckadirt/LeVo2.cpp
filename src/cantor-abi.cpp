@@ -1,13 +1,21 @@
 #include "cantor_engine.h"
 
 #include "levo-checkpoint.h"
+#include "levo-cuda-precision.h"
 #include "levo-engine-request.h"
+#include "levo-flow-model.h"
+#include "levo-flow-renderer.h"
 #include "levo-generator.h"
+#include "levo-renderer-pattern.h"
+#include "levo-token-io.h"
+
+#include "ggml-backend.h"
 
 #include <algorithm>
 #include <array>
 #include <cstdlib>
 #include <cstring>
+#include <cmath>
 #include <exception>
 #include <limits>
 #include <memory>
@@ -30,6 +38,15 @@ struct cantor_ctx {
 namespace {
 
 constexpr std::array<char, 8> lm_magic{{'L', 'E', 'V', 'O', 'L', 'M', '0', '1'}};
+constexpr std::array<char, 8> flow_magic{{'L', 'E', 'V', 'O', 'F', 'L', '0', '1'}};
+constexpr std::array<char, 8> latent_magic{{'L', 'E', 'V', 'O', 'L', 'T', '0', '1'}};
+
+struct backend_deleter {
+    void operator()(ggml_backend_t backend) const noexcept {
+        if (backend != nullptr) ggml_backend_free(backend);
+    }
+};
+using backend_ptr = std::unique_ptr<ggml_backend, backend_deleter>;
 
 thread_local cantor_error g_last_error_code = CANTOR_OK;
 thread_local std::string g_last_error;
@@ -62,6 +79,56 @@ cantor_status guard(F && operation) {
 
 bool cancelled(cantor_cancel_fn callback, void * userdata) {
     return callback != nullptr && callback(userdata) != 0;
+}
+
+bool is_gpu(ggml_backend_dev_t device) {
+    const enum ggml_backend_dev_type type = ggml_backend_dev_type(device);
+    return type == GGML_BACKEND_DEVICE_TYPE_GPU || type == GGML_BACKEND_DEVICE_TYPE_IGPU;
+}
+
+bool is_cuda(ggml_backend_dev_t device) {
+    return is_gpu(device) && std::string(ggml_backend_dev_name(device)).rfind("CUDA", 0) == 0;
+}
+
+ggml_backend_dev_t select_engine_device() {
+    ggml_backend_load_all();
+    const auto first = [](const auto & predicate) -> ggml_backend_dev_t {
+        for (std::size_t index = 0; index < ggml_backend_dev_count(); ++index) {
+            ggml_backend_dev_t device = ggml_backend_dev_get(index);
+            if (predicate(device)) return device;
+        }
+        return nullptr;
+    };
+    if (ggml_backend_dev_t device = first([](ggml_backend_dev_t value) { return is_cuda(value); })) return device;
+    if (ggml_backend_dev_t device = first([](ggml_backend_dev_t value) { return is_gpu(value); })) return device;
+    if (ggml_backend_dev_t device = first([](ggml_backend_dev_t value) {
+            return ggml_backend_dev_type(value) == GGML_BACKEND_DEVICE_TYPE_CPU;
+        })) return device;
+    throw std::runtime_error("no usable GGML backend is registered");
+}
+
+std::vector<float> native_gaussian_noise(std::size_t count, std::uint64_t seed) {
+    auto splitmix64 = [](std::uint64_t & state) {
+        state += 0x9e3779b97f4a7c15ULL;
+        std::uint64_t value = state;
+        value = (value ^ (value >> 30U)) * 0xbf58476d1ce4e5b9ULL;
+        value = (value ^ (value >> 27U)) * 0x94d049bb133111ebULL;
+        return value ^ (value >> 31U);
+    };
+    const auto uniform_open = [&splitmix64](std::uint64_t & state) {
+        constexpr double scale = 1.0 / 9007199254740992.0;
+        return (static_cast<double>(splitmix64(state) >> 11U) + 0.5) * scale;
+    };
+    std::vector<float> result(count);
+    std::uint64_t state = seed;
+    constexpr double two_pi = 6.283185307179586476925286766559;
+    for (std::size_t offset = 0; offset < count; offset += 2U) {
+        const double radius = std::sqrt(-2.0 * std::log(uniform_open(state)));
+        const double angle = two_pi * uniform_open(state);
+        result[offset] = static_cast<float>(radius * std::cos(angle));
+        if (offset + 1U < count) result[offset + 1U] = static_cast<float>(radius * std::sin(angle));
+    }
+    return result;
 }
 
 void emit_progress(cantor_progress_fn callback, void * userdata, cantor_stage stage,
@@ -98,17 +165,54 @@ void append_u32(std::vector<std::uint8_t> & out, std::uint32_t value) {
     for (unsigned shift = 0; shift != 32; shift += 8) out.push_back(static_cast<std::uint8_t>(value >> shift));
 }
 
+void append_f32(std::vector<std::uint8_t> & out, float value) {
+    static_assert(sizeof(float) == sizeof(std::uint32_t), "LeVo checkpoint requires IEEE binary32 floats");
+    std::uint32_t bits = 0;
+    std::memcpy(&bits, &value, sizeof(bits));
+    append_u32(out, bits);
+}
+
 std::uint64_t take_u64(const std::vector<std::uint8_t> & source, std::size_t * offset) {
-    if (source.size() - *offset < 8) throw std::runtime_error("truncated LeLM checkpoint metadata");
+    if (*offset > source.size() || source.size() - *offset < 8) throw std::runtime_error("truncated LeLM checkpoint metadata");
     std::uint64_t result = 0;
     for (unsigned shift = 0; shift != 64; shift += 8) result |= static_cast<std::uint64_t>(source[(*offset)++]) << shift;
     return result;
 }
 
 std::uint32_t take_u32(const std::vector<std::uint8_t> & source, std::size_t * offset) {
-    if (source.size() - *offset < 4) throw std::runtime_error("truncated LeLM checkpoint metadata");
+    if (*offset > source.size() || source.size() - *offset < 4) throw std::runtime_error("truncated LeLM checkpoint metadata");
     std::uint32_t result = 0;
     for (unsigned shift = 0; shift != 32; shift += 8) result |= static_cast<std::uint32_t>(source[(*offset)++]) << shift;
+    return result;
+}
+
+float take_f32(const std::vector<std::uint8_t> & source, std::size_t * offset) {
+    const std::uint32_t bits = take_u32(source, offset);
+    float result = 0.0F;
+    std::memcpy(&result, &bits, sizeof(result));
+    if (!std::isfinite(result)) throw std::runtime_error("checkpoint contains a non-finite float");
+    return result;
+}
+
+std::vector<std::uint8_t> encode_f32(const std::vector<float> & source, const char * label) {
+    if (source.size() > std::numeric_limits<std::size_t>::max() / sizeof(float)) {
+        throw std::runtime_error(std::string(label) + " is too large");
+    }
+    std::vector<std::uint8_t> result;
+    result.reserve(source.size() * sizeof(float));
+    for (const float value : source) {
+        if (!std::isfinite(value)) throw std::runtime_error(std::string(label) + " contains a non-finite float");
+        append_f32(result, value);
+    }
+    return result;
+}
+
+std::vector<float> decode_f32(const std::vector<std::uint8_t> & source, const char * label) {
+    if (source.size() % sizeof(float) != 0) throw std::runtime_error(std::string(label) + " byte size is not float32-aligned");
+    std::vector<float> result;
+    result.reserve(source.size() / sizeof(float));
+    std::size_t offset = 0;
+    while (offset != source.size()) result.push_back(take_f32(source, &offset));
     return result;
 }
 
@@ -238,6 +342,112 @@ void validate_stamp(const lm_stamp & expected, const levo::generation_result & a
     }
 }
 
+void append_size(std::vector<std::uint8_t> & out, std::size_t value, const char * label) {
+    if (value > std::numeric_limits<std::uint64_t>::max()) {
+        throw std::runtime_error(std::string(label) + " exceeds checkpoint range");
+    }
+    append_u64(out, static_cast<std::uint64_t>(value));
+}
+
+std::size_t take_size(const std::vector<std::uint8_t> & source, std::size_t * offset, const char * label) {
+    const std::uint64_t value = take_u64(source, offset);
+    if (value > std::numeric_limits<std::size_t>::max()) {
+        throw std::runtime_error(std::string(label) + " exceeds this platform");
+    }
+    return static_cast<std::size_t>(value);
+}
+
+struct flow_stamp {
+    std::string backend;
+    std::string token_sha256;
+    std::string model_sha256;
+    std::string runtime_revision;
+};
+
+struct flow_metadata {
+    std::size_t source_frames = 0;
+    std::size_t padded_frames = 0;
+    std::size_t window_count = 0;
+    std::size_t euler_steps = 0;
+    std::uint64_t seed = 0;
+    float cfg_scale = 0.0F;
+    std::size_t completed_windows = 0;
+    bool active_window = false;
+    std::size_t active_window_index = 0;
+    std::size_t active_euler_steps = 0;
+    flow_stamp stamp;
+};
+
+std::vector<std::uint8_t> encode_flow_metadata(const flow_metadata & value) {
+    std::vector<std::uint8_t> result;
+    result.reserve(8U * 8U + 5U + value.stamp.backend.size() + value.stamp.token_sha256.size() + value.stamp.model_sha256.size() +
+                   value.stamp.runtime_revision.size());
+    append_size(result, value.source_frames, "Flow source frame count");
+    append_size(result, value.padded_frames, "Flow padded frame count");
+    append_size(result, value.window_count, "Flow window count");
+    append_size(result, value.euler_steps, "Flow Euler step count");
+    append_u64(result, value.seed);
+    append_f32(result, value.cfg_scale);
+    append_size(result, value.completed_windows, "Flow completed window count");
+    result.push_back(value.active_window ? 1U : 0U);
+    append_size(result, value.active_window_index, "Flow active window index");
+    append_size(result, value.active_euler_steps, "Flow active Euler step count");
+    append_string(result, value.stamp.backend);
+    append_string(result, value.stamp.token_sha256);
+    append_string(result, value.stamp.model_sha256);
+    append_string(result, value.stamp.runtime_revision);
+    return result;
+}
+
+flow_metadata decode_flow_metadata(const std::vector<std::uint8_t> & source) {
+    flow_metadata result;
+    std::size_t offset = 0;
+    result.source_frames = take_size(source, &offset, "Flow source frame count");
+    result.padded_frames = take_size(source, &offset, "Flow padded frame count");
+    result.window_count = take_size(source, &offset, "Flow window count");
+    result.euler_steps = take_size(source, &offset, "Flow Euler step count");
+    result.seed = take_u64(source, &offset);
+    result.cfg_scale = take_f32(source, &offset);
+    result.completed_windows = take_size(source, &offset, "Flow completed window count");
+    if (offset >= source.size() || source[offset] > 1U) throw std::runtime_error("invalid Flow active-window flag");
+    result.active_window = source[offset++] != 0;
+    result.active_window_index = take_size(source, &offset, "Flow active window index");
+    result.active_euler_steps = take_size(source, &offset, "Flow active Euler step count");
+    result.stamp.backend = take_string(source, &offset);
+    result.stamp.token_sha256 = take_string(source, &offset);
+    result.stamp.model_sha256 = take_string(source, &offset);
+    result.stamp.runtime_revision = take_string(source, &offset);
+    if (offset != source.size()) throw std::runtime_error("trailing Flow checkpoint metadata bytes");
+    if (result.source_frames == 0 || result.window_count == 0 || result.euler_steps == 0 ||
+        !std::isfinite(result.cfg_scale) || result.cfg_scale <= 0.0F ||
+        result.completed_windows > result.window_count ||
+        (result.active_window && result.active_window_index != result.completed_windows) ||
+        (!result.active_window && result.active_window_index != 0) ||
+        (!result.active_window && result.active_euler_steps != 0)) {
+        throw std::runtime_error("Flow checkpoint metadata has invalid schedule state");
+    }
+    return result;
+}
+
+flow_stamp flow_stamp_from(ggml_backend_t backend, const levo::flow::flow_provenance & provenance,
+                           const std::string & token_sha256) {
+    return {ggml_backend_name(backend), token_sha256, provenance.model_sha256, provenance.runtime_revision};
+}
+
+void validate_flow_stamp(const flow_stamp & expected, ggml_backend_t backend,
+                         const levo::flow::flow_provenance & provenance,
+                         const std::string & token_sha256) {
+    const flow_stamp actual = flow_stamp_from(backend, provenance, token_sha256);
+    if (expected.backend != actual.backend) {
+        throw std::runtime_error("cannot resume: blob was paused on backend '" + expected.backend +
+                                 "', this engine runs on '" + actual.backend + "'");
+    }
+    if (expected.token_sha256 != actual.token_sha256 || expected.model_sha256 != actual.model_sha256 ||
+        expected.runtime_revision != actual.runtime_revision) {
+        throw std::runtime_error("cannot resume: Flow model/runtime stamp differs from the paused run");
+    }
+}
+
 cantor_status run_codes(cantor_ctx * context, const std::uint8_t * input, std::size_t input_size,
                         std::uint8_t ** output, std::size_t * output_size,
                         cantor_progress_fn progress, cantor_cancel_fn should_cancel, void * userdata) {
@@ -308,6 +518,252 @@ cantor_status run_codes(cantor_ctx * context, const std::uint8_t * input, std::s
     return CANTOR_DONE;
 }
 
+std::vector<std::uint8_t> encode_completed_flow_windows(const std::vector<levo::flow::latent_window> & windows,
+                                                        std::size_t per_window) {
+    if (windows.size() > std::numeric_limits<std::size_t>::max() / per_window) {
+        throw std::runtime_error("Flow completed windows exceed checkpoint range");
+    }
+    std::vector<float> flattened;
+    flattened.reserve(windows.size() * per_window);
+    for (std::size_t index = 0; index < windows.size(); ++index) {
+        const levo::flow::latent_window & window = windows[index];
+        if (window.denormalized_latents.size() != per_window) {
+            throw std::runtime_error("Flow completed window has an invalid latent shape");
+        }
+        flattened.insert(flattened.end(), window.denormalized_latents.begin(), window.denormalized_latents.end());
+    }
+    return encode_f32(flattened, "Flow completed latent windows");
+}
+
+std::vector<levo::flow::latent_window> decode_completed_flow_windows(const std::vector<std::uint8_t> & bytes,
+                                                                       std::size_t completed_windows,
+                                                                       std::size_t per_window,
+                                                                       std::size_t hop_frames) {
+    if (completed_windows > std::numeric_limits<std::size_t>::max() / per_window) {
+        throw std::runtime_error("Flow completed-window count overflows this platform");
+    }
+    const std::vector<float> flattened = decode_f32(bytes, "Flow completed latent windows");
+    if (flattened.size() != completed_windows * per_window) {
+        throw std::runtime_error("Flow completed latent payload does not match its window count");
+    }
+    std::vector<levo::flow::latent_window> result;
+    result.reserve(completed_windows);
+    for (std::size_t index = 0; index < completed_windows; ++index) {
+        levo::flow::latent_window window;
+        window.input_offset_frames = index * hop_frames;
+        window.denormalized_latents.assign(flattened.begin() + static_cast<std::ptrdiff_t>(index * per_window),
+                                           flattened.begin() + static_cast<std::ptrdiff_t>((index + 1U) * per_window));
+        result.push_back(std::move(window));
+    }
+    return result;
+}
+
+std::vector<std::vector<std::int64_t>> tokens_as_delayed(const std::vector<std::int32_t> & tokens,
+                                                          std::size_t frame_count) {
+    if (frame_count == 0 || tokens.size() != 3U * frame_count) {
+        throw std::runtime_error("CODES token payload is not [3,T]");
+    }
+    std::vector<std::vector<std::int64_t>> result(3, std::vector<std::int64_t>(frame_count));
+    for (std::size_t stream = 0; stream != 3; ++stream) {
+        for (std::size_t frame = 0; frame != frame_count; ++frame) {
+            result[stream][frame] = tokens[stream * frame_count + frame];
+        }
+    }
+    return result;
+}
+
+std::vector<std::int32_t> delayed_as_tokens(const std::vector<std::vector<std::int64_t>> & delayed) {
+    if (delayed.size() != 3 || delayed.front().empty()) throw std::runtime_error("Flow token checkpoint is not [3,T]");
+    const std::size_t frames = delayed.front().size();
+    std::vector<std::int32_t> result;
+    result.reserve(3U * frames);
+    for (const auto & stream : delayed) {
+        if (stream.size() != frames) throw std::runtime_error("Flow token checkpoint streams differ in length");
+        for (const std::int64_t value : stream) {
+            if (value < 0 || value > std::numeric_limits<std::int32_t>::max()) {
+                throw std::runtime_error("Flow token checkpoint contains an invalid ID");
+            }
+            result.push_back(static_cast<std::int32_t>(value));
+        }
+    }
+    return result;
+}
+
+cantor_status run_flow(cantor_ctx * context, const std::uint8_t * input, std::size_t input_size,
+                       std::uint8_t ** output, std::size_t * output_size,
+                       cantor_progress_fn progress, cantor_cancel_fn should_cancel, void * userdata) {
+    if (context->dit_path.empty()) {
+        set_error(CANTOR_ERR_MODEL, "[LeVo ABI] DIFFUSE requires a dit component");
+        return CANTOR_ERR;
+    }
+    const bool resuming = input_size > flow_magic.size() &&
+        std::equal(flow_magic.begin(), flow_magic.end(), reinterpret_cast<const char *>(input));
+    levo::engine_request::request request;
+    std::string canonical_request;
+    std::vector<std::int32_t> tokens;
+    std::vector<float> noise;
+    flow_metadata saved_metadata;
+    levo::flow::renderer_resume_state saved_resume;
+    if (resuming) {
+        const auto blob = levo::checkpoint::decode(input, input_size, flow_magic);
+        if (blob.stage != CANTOR_STAGE_DIFFUSE || (blob.sections.size() != 5U && blob.sections.size() != 6U)) {
+            throw std::runtime_error("Flow checkpoint has an unexpected stage or section set");
+        }
+        const auto & request_section = required_section(blob, levo::checkpoint::section_kind::request_json);
+        canonical_request.assign(reinterpret_cast<const char *>(request_section.bytes.data()), request_section.bytes.size());
+        request = levo::engine_request::parse(canonical_request);
+        if (!request.seed_present) throw std::runtime_error("paused Flow request does not contain a resolved LeLM seed");
+        tokens = delayed_as_tokens(decode_delayed(required_section(blob, levo::checkpoint::section_kind::delayed_tokens_i32).bytes));
+        saved_metadata = decode_flow_metadata(required_section(blob, levo::checkpoint::section_kind::metadata).bytes);
+        noise = decode_f32(required_section(blob, levo::checkpoint::section_kind::flow_noise_f32).bytes, "Flow checkpoint noise");
+        const auto & completed = required_section(blob, levo::checkpoint::section_kind::completed_latents_f32);
+        // Split the stored raw windows after Flow hparams have verified their
+        // exact window dimensions below. Keeping bytes opaque until then makes
+        // malformed claims fail before model execution.
+        saved_resume.active_window = saved_metadata.active_window;
+        saved_resume.active_window_index = saved_metadata.active_window_index;
+        saved_resume.active_euler.completed_steps = saved_metadata.active_euler_steps;
+        if (saved_metadata.active_window) {
+            if (blob.sections.size() != 6U) throw std::runtime_error("Flow checkpoint is missing active Euler state");
+            saved_resume.active_euler.normalized_state = decode_f32(
+                required_section(blob, levo::checkpoint::section_kind::euler_state_f32).bytes, "Flow checkpoint Euler state");
+        } else if (blob.sections.size() != 5U) {
+            throw std::runtime_error("Flow checkpoint has an unexpected Euler state section");
+        }
+        // Temporarily retain the payload in normalized_state only for the
+        // pre-model semantic validation; it is replaced with a real Euler
+        // cursor below if this is an active-window checkpoint.
+        saved_resume.completed_windows = decode_completed_flow_windows(
+            completed.bytes, saved_metadata.completed_windows,
+            static_cast<std::size_t>(levo::renderer_window_frames) * 64U,
+            static_cast<std::size_t>(levo::renderer_hop_frames));
+    } else {
+        const std::string codes_json(reinterpret_cast<const char *>(input), input_size);
+        const levo::engine_request::codes codes = levo::engine_request::parse_codes(codes_json);
+        request = codes.generation_request;
+        canonical_request = levo::engine_request::serialize(request);
+        tokens = codes.tokens;
+    }
+    if (tokens.size() % 3U != 0 || tokens.empty()) throw std::runtime_error("Flow input tokens are not [3,T]");
+    const std::size_t frame_count = tokens.size() / 3U;
+    const std::vector<std::vector<std::int32_t>> streams_by_codebook{
+        std::vector<std::int32_t>(tokens.begin(), tokens.begin() + static_cast<std::ptrdiff_t>(frame_count)),
+        std::vector<std::int32_t>(tokens.begin() + static_cast<std::ptrdiff_t>(frame_count),
+                                  tokens.begin() + static_cast<std::ptrdiff_t>(2U * frame_count)),
+        std::vector<std::int32_t>(tokens.begin() + static_cast<std::ptrdiff_t>(2U * frame_count), tokens.end()),
+    };
+    const levo::renderer_token_streams streams = levo::validate_renderer_tokens(streams_by_codebook);
+    const levo::renderer_schedule schedule = levo::make_renderer_schedule(frame_count);
+    const std::size_t per_window = static_cast<std::size_t>(levo::renderer_window_frames) * 64U;
+    if (schedule.windows.size() > std::numeric_limits<std::size_t>::max() / per_window) {
+        throw std::runtime_error("Flow schedule noise shape overflows this platform");
+    }
+    const std::size_t noise_count = schedule.windows.size() * per_window;
+    if (!resuming) noise = native_gaussian_noise(noise_count, request.flow_seed);
+    if (noise.size() != noise_count) throw std::runtime_error("Flow checkpoint noise has an unexpected shape");
+
+    ggml_backend_dev_t device = select_engine_device();
+    levo::detail::configure_cuda_gemm_f32_accumulation(device);
+    levo::detail::configure_cuda_disable_tf32(device);
+    backend_ptr backend(ggml_backend_dev_init(device, nullptr));
+    if (!backend) throw std::runtime_error("cannot initialize Flow backend");
+    const std::shared_ptr<levo::flow::model> model = levo::flow::model::load_gguf(
+        context->dit_path, {backend.get(), true, true, false});
+    const levo::flow::flow_hparams & hp = model->hparams();
+    if (hp.window_frames != static_cast<int32_t>(levo::renderer_window_frames) ||
+        hp.hop_frames != static_cast<int32_t>(levo::renderer_hop_frames) ||
+        hp.overlap_frames != static_cast<int32_t>(levo::renderer_overlap_frames) || hp.latent_dim != 64) {
+        throw std::runtime_error("Flow GGUF does not match the native window/latent contract");
+    }
+    const std::size_t resolved_steps = resuming ? saved_metadata.euler_steps :
+        (request.flow_euler_steps == 0 ? static_cast<std::size_t>(hp.euler_steps_default) : request.flow_euler_steps);
+    const float resolved_cfg = resuming ? saved_metadata.cfg_scale :
+        (request.flow_cfg_scale == 0.0F ? hp.cfg_default : request.flow_cfg_scale);
+    if (resolved_steps == 0 || !std::isfinite(resolved_cfg) || resolved_cfg <= 0.0F) {
+        throw std::runtime_error("Flow request resolves to invalid Euler settings");
+    }
+    const std::string token_sha256 = levo::token_io::tensor_sha256(tokens);
+    if (resuming) {
+        if (saved_metadata.source_frames != frame_count || saved_metadata.padded_frames != schedule.padded_frames ||
+            saved_metadata.window_count != schedule.windows.size() || saved_metadata.completed_windows != saved_resume.completed_windows.size()) {
+            throw std::runtime_error("Flow checkpoint schedule does not match its embedded CODES input");
+        }
+        if (saved_resume.active_window && saved_resume.active_euler.normalized_state.size() != per_window) {
+            throw std::runtime_error("Flow checkpoint Euler tensor has an unexpected shape");
+        }
+        validate_flow_stamp(saved_metadata.stamp, backend.get(), model->provenance(), token_sha256);
+    }
+
+    levo::flow::render_input flow_input;
+    flow_input.vocal_codes = streams.vocal;
+    flow_input.bgm_codes = streams.bgm;
+    flow_input.initial_noise = noise;
+    levo::flow::render_options options;
+    options.euler_steps = resolved_steps;
+    options.guidance_scale = resolved_cfg;
+    options.cancelled = [should_cancel, userdata] { return cancelled(should_cancel, userdata); };
+    options.progress = [progress, userdata](std::size_t window, std::size_t windows,
+                                            std::size_t completed_steps, std::size_t total_steps) {
+        if (window == 0 || total_steps == 0 || windows > std::numeric_limits<std::size_t>::max() / total_steps ||
+            window - 1U > std::numeric_limits<std::size_t>::max() / total_steps) {
+            throw std::runtime_error("Flow progress counter overflows");
+        }
+        emit_progress(progress, userdata, CANTOR_STAGE_DIFFUSE,
+                      (window - 1U) * total_steps + completed_steps, windows * total_steps);
+    };
+    levo::flow::renderer renderer(model);
+    levo::flow::resumable_render_output result = renderer.render_resumable(
+        flow_input, options, resuming ? &saved_resume : nullptr);
+
+    const flow_stamp stamp = flow_stamp_from(backend.get(), model->provenance(), token_sha256);
+    const auto metadata_for = [&](const std::vector<levo::flow::latent_window> & completed,
+                                  bool active, std::size_t active_index, std::size_t active_steps) {
+        flow_metadata metadata;
+        metadata.source_frames = frame_count;
+        metadata.padded_frames = schedule.padded_frames;
+        metadata.window_count = schedule.windows.size();
+        metadata.euler_steps = resolved_steps;
+        metadata.seed = request.flow_seed;
+        metadata.cfg_scale = resolved_cfg;
+        metadata.completed_windows = completed.size();
+        metadata.active_window = active;
+        metadata.active_window_index = active ? active_index : 0;
+        metadata.active_euler_steps = active ? active_steps : 0;
+        metadata.stamp = stamp;
+        return metadata;
+    };
+    const std::vector<std::vector<std::int64_t>> delayed_tokens = tokens_as_delayed(tokens, frame_count);
+    if (result.paused) {
+        const flow_metadata metadata = metadata_for(result.resume.completed_windows, result.resume.active_window,
+            result.resume.active_window_index, result.resume.active_euler.completed_steps);
+        std::vector<levo::checkpoint::section> sections{
+            {levo::checkpoint::section_kind::request_json, std::vector<std::uint8_t>(canonical_request.begin(), canonical_request.end())},
+            {levo::checkpoint::section_kind::delayed_tokens_i32, encode_delayed(delayed_tokens)},
+            {levo::checkpoint::section_kind::flow_noise_f32, encode_f32(noise, "Flow initial noise")},
+            {levo::checkpoint::section_kind::completed_latents_f32, encode_completed_flow_windows(result.resume.completed_windows, per_window)},
+            {levo::checkpoint::section_kind::metadata, encode_flow_metadata(metadata)},
+        };
+        if (result.resume.active_window) {
+            sections.push_back({levo::checkpoint::section_kind::euler_state_f32,
+                                encode_f32(result.resume.active_euler.normalized_state, "Flow Euler state")});
+        }
+        const auto blob = levo::checkpoint::encode(flow_magic, CANTOR_STAGE_DIFFUSE, sections);
+        if (!blob_alloc(blob, output, output_size)) return CANTOR_ERR;
+        set_error(CANTOR_ERR_CANCEL, "[LeVo ABI] DIFFUSE paused at an Euler/window boundary");
+        return CANTOR_PAUSED;
+    }
+    const flow_metadata metadata = metadata_for(result.output.windows, false, 0, 0);
+    const std::vector<levo::checkpoint::section> sections{
+        {levo::checkpoint::section_kind::request_json, std::vector<std::uint8_t>(canonical_request.begin(), canonical_request.end())},
+        {levo::checkpoint::section_kind::delayed_tokens_i32, encode_delayed(delayed_tokens)},
+        {levo::checkpoint::section_kind::completed_latents_f32, encode_completed_flow_windows(result.output.windows, per_window)},
+        {levo::checkpoint::section_kind::metadata, encode_flow_metadata(metadata)},
+    };
+    const auto blob = levo::checkpoint::encode(latent_magic, CANTOR_STAGE_DIFFUSE, sections);
+    if (!blob_alloc(blob, output, output_size)) return CANTOR_ERR;
+    return CANTOR_DONE;
+}
+
 } // namespace
 
 extern "C" {
@@ -329,7 +785,7 @@ const char * cantor_engine_version(void) {
 }
 
 uint32_t cantor_engine_stages(void) {
-    return 1U << CANTOR_STAGE_CODES;
+    return (1U << CANTOR_STAGE_CODES) | (1U << CANTOR_STAGE_DIFFUSE);
 }
 
 cantor_error cantor_engine_last_error_code(void) {
@@ -404,11 +860,15 @@ cantor_status cantor_engine_run_stage(cantor_ctx * context, cantor_stage stage,
     *output_size = 0;
     context->audio.clear();
     context->audio_samples = 0;
-    if (stage != CANTOR_STAGE_CODES) {
+    if (stage != CANTOR_STAGE_CODES && stage != CANTOR_STAGE_DIFFUSE) {
         set_error(CANTOR_ERR_OTHER, "[LeVo ABI] requested stage is not implemented");
         return CANTOR_ERR;
     }
-    return guard([&] { return run_codes(context, state_in, input_size, state_out, output_size, progress, should_cancel, userdata); });
+    return guard([&] {
+        return stage == CANTOR_STAGE_CODES
+            ? run_codes(context, state_in, input_size, state_out, output_size, progress, should_cancel, userdata)
+            : run_flow(context, state_in, input_size, state_out, output_size, progress, should_cancel, userdata);
+    });
 }
 
 const float * cantor_engine_audio(cantor_ctx * context, int * n_samples, int * sample_rate) {

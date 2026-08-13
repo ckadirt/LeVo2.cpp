@@ -113,6 +113,23 @@ struct render_output {
     std::vector<float> denormalized_latents;
 };
 
+// A cross-process renderer cursor.  Completed windows are denormalized because
+// the next window's in-context prefix is derived from the previous raw window;
+// an active window retains only its normalized fixed-step Euler state.  Flow
+// uses stateless CFG and Euler, so no other sampler history exists.
+struct renderer_resume_state {
+    std::vector<latent_window> completed_windows;
+    bool active_window = false;
+    std::size_t active_window_index = 0;
+    euler_resume_state active_euler;
+};
+
+struct resumable_render_output {
+    bool paused = false;
+    render_output output;
+    renderer_resume_state resume;
+};
+
 // Native Flow scheduler/ODE boundary. Estimator math remains isolated in
 // `estimator`; this layer owns only conditioning assembly, CFG, Euler updates,
 // explicit noise, and 1000/750/250 window continuation.
@@ -128,6 +145,13 @@ public:
     [[nodiscard]] render_output render(
             const render_input & input,
             const render_options & options = {}) const;
+
+    // Cancellation becomes a serializable boundary.  `render()` above keeps
+    // the historical throwing API for non-engine callers.
+    [[nodiscard]] resumable_render_output render_resumable(
+            const render_input & input,
+            const render_options & options = {},
+            const renderer_resume_state * resume = nullptr) const;
 
 private:
     std::shared_ptr<const model> weights_;

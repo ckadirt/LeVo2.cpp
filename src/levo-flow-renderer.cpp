@@ -161,7 +161,9 @@ renderer::~renderer() = default;
 renderer::renderer(renderer &&) noexcept = default;
 renderer & renderer::operator=(renderer &&) noexcept = default;
 
-render_output renderer::render(const render_input & input, const render_options & options) const {
+resumable_render_output renderer::render_resumable(const render_input & input,
+                                                   const render_options & options,
+                                                   const renderer_resume_state * resume) const {
     if (input.vocal_codes.empty() || input.vocal_codes.size() != input.bgm_codes.size()) {
         fail("vocal and BGM token streams must be non-empty and equally sized");
     }
@@ -196,14 +198,59 @@ render_output renderer::render(const render_input & input, const render_options 
     if (input.initial_noise.size() != total_noise) fail("initial_noise must be window-major [scheduled_windows, window_frames, latent_dim]");
     require_finite(input.initial_noise, "initial noise");
 
-    render_output result;
-    result.source_frames = source_frames;
-    result.padded_frames = padded_frames;
-    result.windows.reserve(windows_count);
+    resumable_render_output result;
+    result.output.source_frames = source_frames;
+    result.output.padded_frames = padded_frames;
+    result.output.windows.reserve(windows_count);
+    std::size_t starting_window = 0;
+    if (resume != nullptr) {
+        starting_window = resume->completed_windows.size();
+        if (starting_window > windows_count) fail("Flow resume has too many completed windows");
+        if (resume->active_window && resume->active_window_index != starting_window) {
+            fail("Flow resume active-window cursor does not follow completed windows");
+        }
+        if (!resume->active_window && starting_window == windows_count) {
+            fail("Flow resume state is already complete");
+        }
+        if (resume->active_window && resume->active_window_index >= windows_count) {
+            fail("Flow resume active-window cursor is outside the schedule");
+        }
+        for (std::size_t index = 0; index < resume->completed_windows.size(); ++index) {
+            const latent_window & window = resume->completed_windows[index];
+            if (window.input_offset_frames != index * hop_frames ||
+                window.denormalized_latents.size() != per_window) {
+                fail("Flow resume completed window has an unexpected shape or offset");
+            }
+            require_finite(window.denormalized_latents, "Flow resume denormalized window");
+        }
+        if (resume->active_window) {
+            if (resume->active_euler.completed_steps >= steps ||
+                resume->active_euler.normalized_state.size() != per_window) {
+                fail("Flow resume Euler state is invalid for the requested schedule");
+            }
+            require_finite(resume->active_euler.normalized_state, "Flow resume Euler state");
+        }
+        result.output.windows = resume->completed_windows;
+    }
     std::vector<float> prior_raw;
-    for (std::size_t window_index = 0; window_index < windows_count; ++window_index) {
-        if (options.cancelled && options.cancelled()) throw operation_cancelled();
-        if (options.progress) options.progress(window_index + 1U, windows_count, 0, steps);
+    if (!result.output.windows.empty()) prior_raw = result.output.windows.back().denormalized_latents;
+    for (std::size_t window_index = starting_window; window_index < windows_count; ++window_index) {
+        if (options.cancelled && options.cancelled()) {
+            result.paused = true;
+            result.resume.completed_windows = std::move(result.output.windows);
+            return result;
+        }
+        try {
+            if (options.progress) options.progress(window_index + 1U, windows_count,
+                                                   resume && resume->active_window &&
+                                                           window_index == resume->active_window_index
+                                                       ? resume->active_euler.completed_steps : 0U,
+                                                   steps);
+        } catch (const operation_cancelled &) {
+            result.paused = true;
+            result.resume.completed_windows = std::move(result.output.windows);
+            return result;
+        }
         const std::size_t token_offset = window_index * hop_frames;
         const std::size_t incontext_frames = window_index == 0 ? input.initial_incontext_frames : overlap_frames;
         std::vector<int32_t> vocal(window_frames), bgm(window_frames), masks(window_frames, 2);
@@ -263,22 +310,42 @@ render_output renderer::render(const render_input & input, const render_options 
         };
         const euler_input solver_input{condition.initial_noise, condition.normalized_incontext,
                                        window_frames, latent_dim, incontext_frames, hp.sigma_min};
-        const std::vector<float> normalized = solve_flow_euler(
-            solver_input, steps, evaluate_velocity,
-            [&options, window_index, windows_count](std::size_t completed, std::size_t total) {
-                if (options.progress) options.progress(window_index + 1U, windows_count, completed, total);
-            },
-            options.cancelled);
+        const euler_resume_state * euler_resume = resume && resume->active_window &&
+                                                   window_index == resume->active_window_index
+            ? &resume->active_euler : nullptr;
+        euler_resume_state checkpoint;
+        std::vector<float> normalized;
+        try {
+            normalized = solve_flow_euler(
+                solver_input, steps, evaluate_velocity,
+                [&options, window_index, windows_count](std::size_t completed, std::size_t total) {
+                    if (options.progress) options.progress(window_index + 1U, windows_count, completed, total);
+                },
+                options.cancelled, euler_resume, &checkpoint);
+        } catch (const operation_cancelled &) {
+            result.paused = true;
+            result.resume.completed_windows = std::move(result.output.windows);
+            result.resume.active_window = true;
+            result.resume.active_window_index = window_index;
+            result.resume.active_euler = std::move(checkpoint);
+            return result;
+        }
         latent_window window;
         window.input_offset_frames = token_offset;
         window.normalized_latents = normalized;
         window.denormalized_latents = conditioning_.denormalize_latents(normalized, hp.window_frames);
         prior_raw = window.denormalized_latents;
-        result.windows.push_back(std::move(window));
+        result.output.windows.push_back(std::move(window));
     }
-    result.denormalized_latents = assemble_flow_latent_windows(result.windows, source_frames,
-                                                                 window_frames, hop_frames, latent_dim);
+    result.output.denormalized_latents = assemble_flow_latent_windows(result.output.windows, source_frames,
+                                                                        window_frames, hop_frames, latent_dim);
     return result;
+}
+
+render_output renderer::render(const render_input & input, const render_options & options) const {
+    resumable_render_output result = render_resumable(input, options, nullptr);
+    if (result.paused) throw operation_cancelled();
+    return std::move(result.output);
 }
 
 } // namespace levo::flow
