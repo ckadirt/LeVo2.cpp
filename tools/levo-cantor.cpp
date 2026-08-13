@@ -206,9 +206,9 @@ int main(int argc, char ** argv) {
         cantor_ctx * context = cantor_engine_load(components.data(), components.size(), nullptr);
         if (context == nullptr) fail(cantor_engine_last_error());
         std::vector<std::uint8_t> state = read_bytes(args.input);
+        cantor_stage stage = stage_for(state);
         progress_state progress;
         while (true) {
-            const cantor_stage stage = stage_for(state);
             std::cerr << '[' << stage_name(stage) << "] starting\n";
             std::uint8_t * output = nullptr;
             std::size_t output_size = 0;
@@ -249,6 +249,7 @@ int main(int argc, char ** argv) {
                 // pauses with its permitted NULL blob.
                 write_checkpoint(args.checkpoint, state);
             }
+            stage = stage == CANTOR_STAGE_CODES ? CANTOR_STAGE_DIFFUSE : CANTOR_STAGE_DECODE;
         }
     } catch (const std::exception & error) {
         std::cerr << "error: " << error.what() << '\n';
