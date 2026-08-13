@@ -143,6 +143,8 @@ pushed before the next long-running step.
   13.2. The version differs from the original CUDA 12.4 implementation host and
   is recorded as release-matrix coverage rather than silently substituted.
 - A clean CPU release build with parity tools passed 21/21 CTests.
+- The CUDA 13.2 release build passed 25/25 CTests, including the RTX 4090
+  backend, F32/TF32 precision guard, CUDA audio operators, and CUDA VAE graph.
 - The asset-free Python suite passed 16 tests with 15 credential/heavy tests
   skipped by their explicit opt-in gates.
 - The downloaded Flow, VAE, config, and public LeLM inputs match every pinned
@@ -152,3 +154,10 @@ pushed before the next long-running step.
   were already published was premature; publication remains a release gate.
 - The release runner now emits structured per-case timing, metrics, artifact
   hashes, and polled peak GPU memory so the final status can be evidence-backed.
+- Fresh F32 conversions reproduced both earlier artifacts byte-for-byte. Flow
+  is 2,653,259,456 bytes with SHA-256
+  `a8cf50dbecef243501b9b345109b1d2f283b3e22f4e4856715197e4b22129d10`;
+  VAE is 337,596,448 bytes with SHA-256
+  `26f9ea955f586ed3d7668fe345a851ba222b8db95b406e3eea3c9565f4a0b515`.
+  Their checksum sidecars, manifests, parameter/tensor counts, and strict
+  CPU/CUDA loaders pass. The focused converter suite is 8/8.
