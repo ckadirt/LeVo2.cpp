@@ -59,8 +59,10 @@ report and validation matrix must record each file's strict load, checksum,
 and native execution evidence before it is uploaded. A low-bit file is never
 silently substituted for a baseline file.
 
-VAE remains F32 because it is the only VAE precision with a passing waveform
-gate. No F16 VAE artifact is published until it has one of its own.
+The separately tagged `LeVo2-v2-vae-F16.gguf` is published only after its
+full-window F16-storage waveform gate. It is not a low-bit VAE: decoder
+operators promote F16 stored weights to F32, and the baseline F32 file remains
+available for fidelity-sensitive use.
 
 Verify the remotely downloaded artifact hash before announcing it.
 

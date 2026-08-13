@@ -29,6 +29,7 @@ stays F32 for every combination.
 | `LeVo2-v2-flow-Q5_K_M.gguf` | Q5_K_M/Q6_K + F32 controls | Flow, compact mixed tier | `0c36bdda1148068aeca4e32abedeeaa9445b672e20f841d0fef84d250b447dcb` |
 | `LeVo2-v2-flow-Q4_K_M.gguf` | Q4_K_M/Q6_K + F32 controls | Flow, smallest mixed tier | `08cc21590702f1c2e9bc62b164d4ae82b9b95d1b1985e13329c2f9d3fae89edc` |
 | `LeVo2-v2-vae-F32.gguf` | F32 | Audio latents to stereo 48 kHz waveform | `26f9ea955f586ed3d7668fe345a851ba222b8db95b406e3eea3c9565f4a0b515` |
+| `LeVo2-v2-vae-F16.gguf` | F16 storage, F32 graph | Smaller decoder-weight artifact | `23e5b11558ae332fbe216d9a06775884469fcbf32236c26ab52defa18c5c8398` |
 
 Each GGUF has a standard `.sha256` sidecar and a deterministic
 `.gguf.manifest.json` conversion inventory. Verify every downloaded component
@@ -65,14 +66,16 @@ you want a different memory/quality trade-off:
 
 ./build-cuda/bin/levo-render tokens.npy \
   --flow-model LeVo2-v2-flow-Q6_K.gguf \
-  --vae-model LeVo2-v2-vae-F32.gguf \
+  --vae-model LeVo2-v2-vae-F16.gguf \
   --output song.wav --backend cuda --steps 50 --cfg 1.5 --seed 1234
 ```
 
 The renderer writes stereo 48 kHz IEEE-F32 WAV and crops output to exactly
 `token_frames * 1920` samples per channel. The native loader verifies every
 quantized tensor type, policy revision, and Flow physical padded layout before
-running it. VAE remains F32 until its separate F16 waveform gate passes.
+running it. The F16 VAE has its own source-artifact lineage and is loaded only
+when its precision tags are present; decoder operators promote its stored F16
+weights to F32 for execution.
 
 ## Quantization policy and selection
 
@@ -146,11 +149,18 @@ Quantization changes near-tied token choices, so neither token IDs nor audio
 are claimed bit-identical to F16/F32. Verify file bytes with the supplied
 sidecars before loading.
 
+The F16 VAE passed its independent 1,000-frame full-window storage comparison
+against a native F32 VAE reference on CPU and CUDA. CUDA measured `2.65128e-3`
+maximum error, `6.56119e-5` RMSE, and `0.999999914` correlation; CPU measured
+`2.65826e-3`, `6.56703e-5`, and `0.999999914`. The decoder graph remains F32,
+so this artifact reduces stored-weight size rather than claiming an F16
+activation/accumulation path.
+
 ## Limitations
 
-- The VAE is F32 only. Low-bit LeLM/Flow files are approximate inference tiers,
-  not F16/F32 parity claims; quality depends on the lyric, prompt, seed, and
-  sampler settings.
+- The VAE F16 artifact is a storage optimization: its decoder graph is F32.
+  Low-bit LeLM/Flow files are approximate inference tiers, not F16/F32 parity
+  claims; quality depends on the lyric, prompt, seed, and sampler settings.
 - Input is lyrics plus an optional style description; audio-prompt encoding and
   source separation are not implemented natively.
 - PyTorch/CUDA and GGML can make different near-tied token choices for prompts

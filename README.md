@@ -102,7 +102,7 @@ the native Flow transformer and Oobleck VAE decoder:
 ```bash
 ./build-cuda/bin/levo-render tokens.npy \
   --flow-model LeVo2-v2-flow-F32.gguf \
-  --vae-model LeVo2-v2-vae-F32.gguf \
+  --vae-model LeVo2-v2-vae-F16.gguf \
   --output song.wav \
   --backend cuda --steps 50 --cfg 1.5 --seed 1234
 ```
@@ -121,19 +121,22 @@ and provides `write_render_artifact` for the paired artifact.
 
 Both renderer GGUFs are published alongside the LeLM artifact in
 [`ckadirt/LeVo2-GGUF`](https://huggingface.co/ckadirt/LeVo2-GGUF). The renderer
-is F32 only: F16 execution is deferred until it passes its own precision gate,
-and F16 artifacts are rejected rather than silently downcast.
+accepts the separately tagged F16 VAE storage artifact. Its weights, biases,
+and SnakeBeta parameters are promoted to F32 in the native correctness graph;
+the VAE input, operators, accumulation, and WAV stay F32. Flow remains F32 or
+an explicitly selected low-bit profile, never an implicit precision change.
 
 Verify the renderer artifacts before loading them:
 
 ```bash
 sha256sum -c LeVo2-v2-flow-F32.gguf.sha256
-sha256sum -c LeVo2-v2-vae-F32.gguf.sha256
+sha256sum -c LeVo2-v2-vae-F16.gguf.sha256
 ```
 
 The expected hashes are `a8cf50dbecef243501b9b345109b1d2f283b3e22f4e4856715197e4b22129d10`
 for Flow and `26f9ea955f586ed3d7668fe345a851ba222b8db95b406e3eea3c9565f4a0b515`
-for VAE.
+for the F32 VAE baseline. The F16 VAE SHA-256 is
+`23e5b11558ae332fbe216d9a06775884469fcbf32236c26ab52defa18c5c8398`.
 
 `--steps 0` and `--cfg 0` select the checkpoint defaults (50 Euler steps,
 guidance 1.5). `--noise-f32` replaces the internal Gaussian draw with an

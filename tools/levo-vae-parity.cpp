@@ -50,6 +50,7 @@ struct arguments {
     std::string latent;
     std::array<std::string, 5> stage;
     std::string audio;
+    std::string actual_audio;
     std::size_t frames = 0;
     std::string backend;
     float max_abs = k_frozen_max_abs;
@@ -95,6 +96,7 @@ arguments parse_arguments(int argc, char ** argv) {
         else if (option == "--stage3") result.stage[3] = value;
         else if (option == "--stage4") result.stage[4] = value;
         else if (option == "--audio") result.audio = value;
+        else if (option == "--actual-audio") result.actual_audio = value;
         else if (option == "--frames") result.frames = parse_size(value, "--frames");
         else if (option == "--backend") result.backend = value;
         else if (option == "--max-abs") result.max_abs = parse_float(value, "--max-abs");
@@ -161,6 +163,15 @@ metrics compare(const std::vector<float> & actual, const std::vector<float> & ex
     return result;
 }
 
+void write_raw_f32(const std::string & path, const std::vector<float> & values) {
+    if (path.empty()) return;
+    std::ofstream output(path, std::ios::binary | std::ios::trunc);
+    if (!output) throw std::runtime_error("cannot write actual audio: " + path);
+    output.write(reinterpret_cast<const char *>(values.data()), static_cast<std::streamsize>(values.size() * sizeof(float)));
+    output.flush();
+    if (!output) throw std::runtime_error("cannot finalize actual audio: " + path);
+}
+
 bool passes(const metrics & value, const arguments & args) {
     return value.max_abs <= args.max_abs && value.rmse <= args.max_rmse && value.cosine >= args.min_cosine;
 }
@@ -184,9 +195,8 @@ int main(int argc, char ** argv) {
         if (!backend) throw std::runtime_error("failed to initialize backend");
         levo::detail::vae_model_load_options options;
         options.backend = backend.get();
-        // The native VAE correctness graph is intentionally F32 only.
         options.allow_f32 = true;
-        options.allow_f16 = false;
+        options.allow_f16 = true;
         const auto weights = levo::detail::vae_model::load_gguf(args.model, options);
         const auto decoder = levo::detail::vae_decoder::create(weights);
 
@@ -205,6 +215,7 @@ int main(int argc, char ** argv) {
         const auto result = decoder->decode(latent, args.frames, compare_stages);
         if (result.audio.size() != expected_audio.size()) throw std::runtime_error("native decoder returned unexpected capture inventory");
         if (compare_stages && result.stage_outputs.size() != expected_stages.size()) throw std::runtime_error("native decoder returned unexpected capture inventory");
+        write_raw_f32(args.actual_audio, result.audio);
 
         bool success = true;
         for (std::size_t stage = 0; compare_stages && stage < expected_stages.size(); ++stage) {

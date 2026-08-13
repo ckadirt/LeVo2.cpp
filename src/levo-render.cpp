@@ -422,7 +422,7 @@ render_result render_tokens_to_audio(const render_config & config,
     decoded_windows.reserve(latents.windows.size());
     {
         const std::shared_ptr<detail::vae_model> model = detail::vae_model::load_gguf(
-            config.vae_model_path.string(), {backend.get(), true, false, true});
+            config.vae_model_path.string(), {backend.get(), true, true, true});
         const detail::vae_provenance & source = model->provenance();
         provenance.vae_model_name = source.name;
         provenance.vae_checkpoint_sha256 = source.checkpoint_sha256;

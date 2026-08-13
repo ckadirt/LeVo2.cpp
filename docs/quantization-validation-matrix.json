@@ -61,6 +61,54 @@
       }
     ]
   },
+  "vae": {
+    "source_artifact": {
+      "filename": "LeVo2-v2-vae-F32.gguf",
+      "bytes": 337596448,
+      "sha256": "26f9ea955f586ed3d7668fe345a851ba222b8db95b406e3eea3c9565f4a0b515"
+    },
+    "artifact": {
+      "filename": "LeVo2-v2-vae-F16.gguf",
+      "bytes": 168805120,
+      "sha256": "23e5b11558ae332fbe216d9a06775884469fcbf32236c26ab52defa18c5c8398",
+      "tensor_count": 145,
+      "tensor_type_counts": {"f16": 145}
+    },
+    "full_window_f16_vs_native_f32": {
+      "frames": 1000,
+      "stereo_samples": 3840000,
+      "thresholds": {
+        "max_abs": 0.003,
+        "rmse": 0.0001,
+        "min_cosine": 0.9999998
+      },
+      "cuda": {
+        "f32_raw_sha256": "439362565e765bbdd2d6fa95f97bf344652ab56e9dbcb66880e628bf74e31688",
+        "f16_raw_sha256": "2dc4ec96929fac3d645d7b44a30509b28327e3b7f7ac6699b493e7495cb41c6d",
+        "max_abs": 0.00265127793,
+        "rmse": 0.0000656118723,
+        "cosine": 0.999999914287
+      },
+      "cpu": {
+        "f32_raw_sha256": "e3e1473caec9570c497e0908e30b9c0524633b517b6cef981130214035650885",
+        "f16_raw_sha256": "ab47f8da38769f35040cac65155a67c7581088596a472874ce978ad9f147875e",
+        "max_abs": 0.00265826285,
+        "rmse": 0.0000656702964,
+        "cosine": 0.99999991419
+      }
+    },
+    "render_smoke": {
+      "tokens": "artifacts/render-parity/tokens-2s.npy",
+      "flow": "LeVo2-v2-flow-F32.gguf",
+      "steps": 1,
+      "cfg": 1.5,
+      "seed": 1234,
+      "cuda_wav_sha256": "e34a3dac905e71efd0ff4175e8f401a9d7f0e5f1e85324d281fb8a1d9b3f8cad",
+      "cpu_wav_sha256": "aa8e0502c0e534f3148356b610f390c7be5ca5c85867742d3f88674f20636da2",
+      "cuda_snr_db_vs_f32_vae": 61.9330665,
+      "cuda_correlation_vs_f32_vae": 0.999999683035
+    }
+  },
   "flow": {
     "fixture": {
       "tokens": "artifacts/render-parity/tokens-2s.npy",

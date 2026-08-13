@@ -17,7 +17,9 @@
 namespace levo::detail {
 namespace {
 
-constexpr std::size_t graph_capacity = 2048;
+// F16 artifacts promote each stored weight to F32 in the correctness graph.
+// Keep capacity comfortably above the F32 graph's node count plus 145 casts.
+constexpr std::size_t graph_capacity = 4096;
 
 struct context_deleter {
     void operator()(ggml_context * context) const noexcept {
@@ -45,20 +47,20 @@ using buffer_ptr = std::unique_ptr<ggml_backend_buffer, buffer_deleter>;
     throw std::runtime_error("LeVo VAE: " + message);
 }
 
-void require_f32(const ggml_tensor * tensor, const char * label) {
-    if (tensor == nullptr || tensor->type != GGML_TYPE_F32) {
-        fail(std::string(label) + " must be present and F32 for the correctness graph");
+void require_weight(const ggml_tensor * tensor, const char * label) {
+    if (tensor == nullptr || (tensor->type != GGML_TYPE_F32 && tensor->type != GGML_TYPE_F16)) {
+        fail(std::string(label) + " must be present as F32 or F16");
     }
 }
 
 void validate_weights(const vae_decoder_weights & weights) {
     const auto snake = [](const vae_snake_weights & value) {
-        require_f32(value.alpha_log, "SnakeBeta alpha");
-        require_f32(value.beta_log, "SnakeBeta beta");
+        require_weight(value.alpha_log, "SnakeBeta alpha");
+        require_weight(value.beta_log, "SnakeBeta beta");
     };
     const auto conv = [](const vae_conv_weights & value, bool require_bias) {
-        require_f32(value.weight, "convolution weight");
-        if (require_bias) require_f32(value.bias, "convolution bias");
+        require_weight(value.weight, "convolution weight");
+        if (require_bias) require_weight(value.bias, "convolution bias");
     };
     conv(weights.input, true);
     for (const auto & stage : weights.stage) {
@@ -72,7 +74,7 @@ void validate_weights(const vae_decoder_weights & weights) {
         }
     }
     snake(weights.output_activation);
-    require_f32(weights.output_weight, "output convolution weight");
+    require_weight(weights.output_weight, "output convolution weight");
 }
 
 ggml_tensor * run_snake(ggml_context * context,

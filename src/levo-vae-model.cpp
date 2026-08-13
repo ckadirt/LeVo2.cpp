@@ -31,6 +31,9 @@ constexpr const char * k_ggml_repository = "levo2.source.ggml_repository";
 constexpr const char * k_ggml_revision = "levo2.source.ggml_revision";
 constexpr const char * k_checkpoint_sha256 = "levo2.source.checkpoint_sha256";
 constexpr const char * k_config_sha256 = "levo2.source.config_sha256";
+constexpr const char * k_precision_profile = "levo2.precision.profile";
+constexpr const char * k_precision_policy_revision = "levo2.precision.policy_revision";
+constexpr const char * k_precision_source_artifact_sha256 = "levo2.precision.source_artifact_sha256";
 
 struct context_deleter { void operator()(ggml_context * p) const noexcept { if (p != nullptr) ggml_free(p); } };
 struct buffer_deleter { void operator()(ggml_backend_buffer_t p) const noexcept { if (p != nullptr) ggml_backend_buffer_free(p); } };
@@ -198,6 +201,20 @@ std::unordered_set<std::string> validate_inventory(const gguf_context * context,
     return expected;
 }
 
+void validate_precision_metadata(const gguf_context * context) {
+    const uint32_t file_type = required_u32(context, k_file_type);
+    if (file_type == 0U) return;
+    if (file_type != 1U) fail("general.file_type must be F32 (0) or F16 (1)");
+    if (required_string(context, k_precision_profile) != "F16") {
+        fail("F16 VAE metadata must declare levo2.precision.profile=F16");
+    }
+    if (required_string(context, k_precision_policy_revision) != "1") {
+        fail("F16 VAE metadata has an unsupported precision policy revision");
+    }
+    const std::string source_artifact = required_string(context, k_precision_source_artifact_sha256);
+    require_sha256(source_artifact, k_precision_source_artifact_sha256);
+}
+
 std::size_t file_size_or_fail(const std::string & path) {
     std::ifstream file(path, std::ios::binary | std::ios::ate);
     if (!file) fail("cannot open " + quote(path));
@@ -317,6 +334,7 @@ std::shared_ptr<vae_model> vae_model::load_gguf(const std::string & path, const 
     vae_provenance provenance = parse_provenance(gguf.get(), options.require_pinned_provenance);
     provenance.artifact_sha256 = token_io::file_sha256(path);
     (void) validate_inventory(gguf.get(), hparams);
+    validate_precision_metadata(gguf.get());
 
     const auto result = std::shared_ptr<vae_model>(new vae_model());
     result->impl_->hparams = hparams; result->impl_->provenance = provenance; result->impl_->backend = options.backend;

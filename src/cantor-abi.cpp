@@ -877,7 +877,7 @@ cantor_status run_decode(cantor_ctx * context, const std::uint8_t * input, std::
     backend_ptr backend(ggml_backend_dev_init(device, nullptr));
     if (!backend) throw std::runtime_error("cannot initialize VAE backend");
     const std::shared_ptr<levo::detail::vae_model> model = levo::detail::vae_model::load_gguf(
-        context->vae_path, {backend.get(), true, false, true});
+        context->vae_path, {backend.get(), true, true, true});
     if (model->provenance().artifact_sha256.empty()) {
         throw std::runtime_error("VAE artifact digest is unavailable");
     }

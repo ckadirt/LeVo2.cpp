@@ -13,8 +13,11 @@ WAV writer. The earlier WIP assertion that all release cases passed was not
 backed by committed matrix reports and is superseded by this trace.
 
 The official Python decoder remains in the repository as the reference oracle,
-not as the production path. F16 renderer execution is still deferred until it
-passes its own precision gate; F16 GGUFs are rejected rather than downcast.
+not as the production path. The separately tagged F16 VAE storage artifact is
+now accepted: its weights are promoted to F32 inside the native correctness
+graph, and its independent full-window CPU/CUDA comparison is recorded in
+`quantization-implementation-report.md`. Flow remains F32 or its explicitly
+selected low-bit variants; no implicit precision choice is made.
 
 ## Baseline
 
@@ -83,6 +86,30 @@ The strict VAE converter produced `LeVo2-v2-vae-F32.gguf` with 145 tensors,
 84,395,776 parameters, 337,596,448 bytes, and SHA-256
 `26f9ea955f586ed3d7668fe345a851ba222b8db95b406e3eea3c9565f4a0b515`.
 These hashes identify the gated v0.2 F32 release artifacts.
+
+## Post-v0.2 F16 VAE storage gate
+
+The native `levo-quantize --vae-f16` path converts only the released F32 VAE
+GGUF to a self-identifying 145-tensor F16 artifact. Its F16 tags include the
+complete source GGUF SHA-256; the loader refuses an F16 VAE missing them.
+The decoder casts stored weights, biases, and SnakeBeta parameters back to F32
+within its correctness graph, retaining F32 inputs, operators, accumulation,
+and waveform output.
+
+`LeVo2-v2-vae-F16.gguf` is 168,805,120 bytes with SHA-256
+`23e5b11558ae332fbe216d9a06775884469fcbf32236c26ab52defa18c5c8398`.
+Against independently decoded F32 native output for the complete 1,000-frame
+window (3,840,000 stereo samples), F16 storage measures:
+
+| Backend | Maximum error | RMSE | Cosine |
+| --- | ---: | ---: | ---: |
+| CPU | `2.65826e-3` | `6.56703e-5` | `0.999999914` |
+| RTX 4090 CUDA | `2.65128e-3` | `6.56119e-5` | `0.999999914` |
+
+Both pass the dedicated F16 storage gate: maximum error ≤ `3e-3`, RMSE ≤
+`1e-4`, cosine ≥ `0.9999998`. The deterministic F32 Flow→F16 VAE two-second
+render is finite 48 kHz stereo on CPU and CUDA; all identities and commands
+are frozen in `docs/quantization-validation-matrix.json`.
 
 Validated commands include:
 

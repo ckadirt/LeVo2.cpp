@@ -43,16 +43,19 @@ using context_ptr = std::unique_ptr<ggml_context, context_deleter>;
 void usage(const char * program) {
     std::cout << "Usage:\n  " << program
               << " --input SOURCE.gguf --output QUANTIZED.gguf"
-                 " --profile Q8_0|Q6_K|Q5_K_M|Q4_K_M\n\n"
-                 "Quantizes strict F32/F16 LeLM or Flow GGUF artifacts. VAE and "
-                 "already-quantized inputs are rejected. The output receives a "
-                 "checksum and deterministic manifest beside the GGUF.\n";
+                 " --profile Q8_0|Q6_K|Q5_K_M|Q4_K_M\n  " << program
+              << " --input VAE-F32.gguf --output VAE-F16.gguf --vae-f16\n\n"
+                 "Quantizes strict F32/F16 LeLM or Flow GGUF artifacts, or performs "
+                 "the separately tagged F32-to-F16 VAE conversion. Existing outputs "
+                 "and already-converted VAE inputs are rejected. The output receives "
+                 "a checksum and deterministic manifest beside the GGUF.\n";
 }
 
 struct options {
     std::filesystem::path input;
     std::filesystem::path output;
     levo::quantization::profile profile = levo::quantization::profile::q8_0;
+    bool vae_f16 = false;
 };
 
 options parse(int argc, char ** argv) {
@@ -75,6 +78,8 @@ options parse(int argc, char ** argv) {
             if (!parsed) fail("unsupported profile; use Q8_0, Q6_K, Q5_K_M, or Q4_K_M");
             result.profile = *parsed;
             profile_present = true;
+        } else if (option == "--vae-f16") {
+            result.vae_f16 = true;
         } else if (option == "--help") {
             usage(argv[0]);
             std::exit(0);
@@ -82,8 +87,8 @@ options parse(int argc, char ** argv) {
             fail("unknown option " + option);
         }
     }
-    if (result.input.empty() || result.output.empty() || !profile_present) {
-        fail("--input, --output, and --profile are required");
+    if (result.input.empty() || result.output.empty() || (profile_present == result.vae_f16)) {
+        fail("--input and --output plus exactly one of --profile or --vae-f16 are required");
     }
     if (result.input.extension() != ".gguf" || result.output.extension() != ".gguf") {
         fail("--input and --output must use the .gguf extension");
@@ -218,17 +223,22 @@ std::uint32_t required_u32(const gguf_context * context, const char * key) {
     return gguf_get_val_u32(context, required_key(context, key, GGUF_TYPE_UINT32));
 }
 
-enum class component { lelm, flow };
+enum class component { lelm, flow, vae };
 
 const char * component_name(component value) {
-    return value == component::lelm ? "LeLM" : "Flow";
+    switch (value) {
+        case component::lelm: return "LeLM";
+        case component::flow: return "Flow";
+        case component::vae: return "VAE";
+    }
+    fail("unknown component");
 }
 
 component classify(const gguf_context * context) {
     const std::string architecture = required_string(context, "general.architecture");
     if (architecture == "levo2") return component::lelm;
     if (architecture == "levo2_flow") return component::flow;
-    if (architecture == "levo2_vae") fail("VAE quantization is deliberately unsupported; only a separately gated F16 VAE is planned");
+    if (architecture == "levo2_vae") return component::vae;
     fail("unsupported general.architecture '" + architecture + "'");
 }
 
@@ -255,7 +265,7 @@ struct tensor_plan {
 };
 
 std::vector<tensor_plan> make_plan(const gguf_context * source, component kind,
-                                   levo::quantization::profile profile,
+                                   const options & options,
                                    const std::vector<raw_tensor_info> & raw) {
     const int64_t count = gguf_get_n_tensors(source);
     if (count <= 0 || static_cast<std::size_t>(count) != raw.size()) fail("GGUF tensor inventory is inconsistent");
@@ -273,9 +283,11 @@ std::vector<tensor_plan> make_plan(const gguf_context * source, component kind,
         const int64_t * shape = gguf_get_tensor_ne(source, index);
         for (int dimension = 0; dimension < GGML_MAX_DIMS; ++dimension) item.source_shape[dimension] = shape[dimension];
         item.storage_shape = item.source_shape;
-        item.target_type = kind == component::lelm
-            ? levo::quantization::lelm_tensor_type(item.name, item.rank, profile)
-            : levo::quantization::flow_tensor_type(item.name, item.rank, profile);
+        item.target_type = kind == component::vae
+            ? GGML_TYPE_F16
+            : kind == component::lelm
+                ? levo::quantization::lelm_tensor_type(item.name, item.rank, options.profile)
+                : levo::quantization::flow_tensor_type(item.name, item.rank, options.profile);
         if (kind == component::flow && levo::quantization::flow_block_matrix(item.name)) {
             item.storage_shape[0] = levo::quantization::padded_input_columns(item.source_shape[0], item.target_type);
         }
@@ -292,10 +304,13 @@ std::vector<tensor_plan> make_plan(const gguf_context * source, component kind,
     return result;
 }
 
-void validate_source_file_type(const gguf_context * source, const std::vector<tensor_plan> & plan) {
+void validate_source_file_type(const gguf_context * source, component kind, const std::vector<tensor_plan> & plan) {
     const uint32_t file_type = required_u32(source, "general.file_type");
     const ggml_type expected = file_type == 0 ? GGML_TYPE_F32 : file_type == 1 ? GGML_TYPE_F16 : GGML_TYPE_COUNT;
     if (expected == GGML_TYPE_COUNT) fail("input general.file_type must be F32 (0) or F16 (1)");
+    if (kind == component::vae && expected != GGML_TYPE_F32) {
+        fail("VAE F16 conversion requires a strict F32 VAE input; already-converted VAE inputs are refused");
+    }
     for (const tensor_plan & item : plan) {
         if (item.source_type != expected) {
             fail("input tensor '" + item.name + "' is inconsistent with general.file_type");
@@ -348,6 +363,13 @@ void write_tensor(std::ifstream & input, std::ofstream & output, std::size_t dat
             output.write(reinterpret_cast<const char *>(values.data()), static_cast<std::streamsize>(values.size() * sizeof(float)));
             if (!output) fail("cannot write F32 tensor '" + item.name + "'");
             written += values.size() * sizeof(float);
+        } else if (item.target_type == GGML_TYPE_F16) {
+            if (target_columns != source_columns) fail("F16 conversion cannot change tensor storage width");
+            std::vector<ggml_fp16_t> converted(values.size());
+            ggml_fp32_to_fp16_row(values.data(), converted.data(), static_cast<int64_t>(values.size()));
+            output.write(reinterpret_cast<const char *>(converted.data()), static_cast<std::streamsize>(converted.size() * sizeof(ggml_fp16_t)));
+            if (!output) fail("cannot write F16 tensor '" + item.name + "'");
+            written += converted.size() * sizeof(ggml_fp16_t);
         } else {
             std::vector<float> padded;
             const float * quant_input = values.data();
@@ -419,12 +441,20 @@ std::string make_manifest(const options & options, component kind, const std::st
         << "    \"filename\": " << json_escape(options.output.filename().string()) << ",\n"
         << "    \"sha256\": " << json_escape(artifact_sha256) << "\n"
         << "  },\n"
-        << "  \"component\": " << json_escape(component_name(kind)) << ",\n"
-        << "  \"quantization\": {\n"
-        << "    \"policy_revision\": \"1\",\n"
-        << "    \"profile\": " << json_escape(levo::quantization::name(options.profile));
-    if (kind == component::flow) out << ",\n    \"padded_input_layout\": " << json_escape(levo::quantization::flow_padded_input_layout(options.profile));
-    out << "\n  },\n"
+        << "  \"component\": " << json_escape(component_name(kind)) << ",\n";
+    if (kind == component::vae) {
+        out << "  \"precision\": {\n"
+            << "    \"policy_revision\": \"1\",\n"
+            << "    \"profile\": \"F16\"\n"
+            << "  },\n";
+    } else {
+        out << "  \"quantization\": {\n"
+            << "    \"policy_revision\": \"1\",\n"
+            << "    \"profile\": " << json_escape(levo::quantization::name(options.profile));
+        if (kind == component::flow) out << ",\n    \"padded_input_layout\": " << json_escape(levo::quantization::flow_padded_input_layout(options.profile));
+        out << "\n  },\n";
+    }
+    out
         << "  \"source_artifact\": {\n"
         << "    \"bytes\": " << source_bytes << ",\n"
         << "    \"filename\": " << json_escape(options.input.filename().string()) << ",\n"
@@ -482,16 +512,25 @@ void run(const options & options) {
     const component kind = classify(source.get());
     const std::string source_sha256 = levo::token_io::file_sha256(options.input);
     if (!levo::quantization::is_hex_sha256(source_sha256)) fail("cannot calculate source artifact SHA-256");
-    const std::vector<tensor_plan> plan = make_plan(source.get(), kind, options.profile, raw);
-    validate_source_file_type(source.get(), plan);
+    if ((kind == component::vae) != options.vae_f16) {
+        fail(kind == component::vae ? "VAE input requires --vae-f16" : "--vae-f16 accepts only a VAE GGUF");
+    }
+    const std::vector<tensor_plan> plan = make_plan(source.get(), kind, options, raw);
+    validate_source_file_type(source.get(), kind, plan);
 
     gguf_ptr destination(gguf_init_empty());
     if (!destination) fail("cannot allocate GGUF writer context");
     gguf_set_kv(destination.get(), source.get());
-    gguf_set_val_u32(destination.get(), "general.file_type", levo::quantization::gguf_file_type(options.profile));
-    gguf_set_val_str(destination.get(), levo::quantization::profile_key, levo::quantization::name(options.profile));
-    gguf_set_val_str(destination.get(), levo::quantization::policy_revision_key, levo::quantization::policy_revision);
-    gguf_set_val_str(destination.get(), levo::quantization::source_artifact_sha256_key, source_sha256.c_str());
+    gguf_set_val_u32(destination.get(), "general.file_type", kind == component::vae ? 1U : levo::quantization::gguf_file_type(options.profile));
+    if (kind == component::vae) {
+        gguf_set_val_str(destination.get(), "levo2.precision.profile", "F16");
+        gguf_set_val_str(destination.get(), "levo2.precision.policy_revision", "1");
+        gguf_set_val_str(destination.get(), "levo2.precision.source_artifact_sha256", source_sha256.c_str());
+    } else {
+        gguf_set_val_str(destination.get(), levo::quantization::profile_key, levo::quantization::name(options.profile));
+        gguf_set_val_str(destination.get(), levo::quantization::policy_revision_key, levo::quantization::policy_revision);
+        gguf_set_val_str(destination.get(), levo::quantization::source_artifact_sha256_key, source_sha256.c_str());
+    }
     if (kind == component::flow) {
         gguf_set_val_str(destination.get(), "levo2.flow.parameter_dtype", "MIXED");
         const std::string layout = levo::quantization::flow_padded_input_layout(options.profile);
@@ -529,7 +568,7 @@ void run(const options & options) {
     write_text_atomically(checksum_path, artifact_sha256 + "  " + options.output.filename().string() + "\n");
     write_text_atomically(manifest_path, make_manifest(options, kind, source_sha256, artifact_sha256, source_bytes, artifact_bytes, plan));
     std::cout << "wrote " << options.output << " (" << component_name(kind) << ' '
-              << levo::quantization::name(options.profile) << ", " << artifact_bytes << " bytes)\n"
+              << (kind == component::vae ? "F16" : levo::quantization::name(options.profile)) << ", " << artifact_bytes << " bytes)\n"
               << "sha256 " << artifact_sha256 << '\n';
 }
 

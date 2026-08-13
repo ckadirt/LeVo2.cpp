@@ -20,13 +20,29 @@ void require_f32(const ggml_tensor * tensor, const char * name) {
     }
 }
 
+void require_weight(const ggml_tensor * tensor, const char * name) {
+    if (tensor == nullptr) {
+        fail(std::string(name) + " is null");
+    }
+    if (tensor->type != GGML_TYPE_F32 && tensor->type != GGML_TYPE_F16) {
+        fail(std::string(name) + " must be F32 or F16");
+    }
+}
+
+ggml_tensor * weight_as_f32(ggml_context * context,
+                            ggml_tensor * tensor,
+                            const char * name) {
+    require_weight(tensor, name);
+    return tensor->type == GGML_TYPE_F32 ? tensor : ggml_cast(context, tensor, GGML_TYPE_F32);
+}
+
 ggml_tensor * add_channel_bias(ggml_context * context,
                                ggml_tensor * input,
                                ggml_tensor * bias) {
     if (bias == nullptr) {
         return input;
     }
-    require_f32(bias, "bias");
+    bias = weight_as_f32(context, bias, "bias");
     if (bias->ne[0] != input->ne[1] || bias->ne[1] != 1 ||
         bias->ne[2] != 1 || bias->ne[3] != 1) {
         fail("bias must contain exactly one value per output channel");
@@ -47,7 +63,7 @@ ggml_tensor * conv_1d_f32(ggml_context * context,
     if (context == nullptr) {
         fail("context is null");
     }
-    require_f32(weight, "convolution weight");
+    weight = weight_as_f32(context, weight, "convolution weight");
     require_f32(input, "convolution input");
     if (stride <= 0 || padding < 0 || dilation <= 0) {
         fail("invalid Conv1d stride, padding, or dilation");
@@ -79,7 +95,7 @@ ggml_tensor * conv_transpose_1d_f32(ggml_context * context,
     if (context == nullptr) {
         fail("context is null");
     }
-    require_f32(weight, "transpose-convolution weight");
+    weight = weight_as_f32(context, weight, "transpose-convolution weight");
     require_f32(input, "transpose-convolution input");
     if (stride <= 0 || padding < 0) {
         fail("invalid ConvTranspose1d stride or padding");
@@ -114,8 +130,8 @@ ggml_tensor * snake_beta(ggml_context * context,
         fail("context is null");
     }
     require_f32(input, "SnakeBeta input");
-    require_f32(alpha_log, "SnakeBeta alpha_log");
-    require_f32(beta_log, "SnakeBeta beta_log");
+    require_weight(alpha_log, "SnakeBeta alpha_log");
+    require_weight(beta_log, "SnakeBeta beta_log");
     const auto valid_parameter = [input](const ggml_tensor * parameter) {
         return parameter->ne[0] == 1 && parameter->ne[1] == input->ne[1] &&
                parameter->ne[2] == 1 && parameter->ne[3] == 1;
@@ -123,6 +139,9 @@ ggml_tensor * snake_beta(ggml_context * context,
     if (!valid_parameter(alpha_log) || !valid_parameter(beta_log)) {
         fail("SnakeBeta parameters must have shape [1, channels, 1]");
     }
+
+    alpha_log = weight_as_f32(context, alpha_log, "SnakeBeta alpha_log");
+    beta_log = weight_as_f32(context, beta_log, "SnakeBeta beta_log");
 
     ggml_tensor * alpha = ggml_exp(context, alpha_log);
     ggml_tensor * beta = ggml_scale_bias(context, ggml_exp(context, beta_log),

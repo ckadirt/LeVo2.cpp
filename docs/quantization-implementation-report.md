@@ -27,7 +27,7 @@ usable by the matching released runtime.
 | --- | --- | --- | --- |
 | LeLM | F16 | Q8_0, Q6_K, Q5_K_M, Q4_K_M | strict load, token smoke, frozen quality matrix |
 | Flow | F32 | F16 after separate gate; Q8_0, Q6_K, Q5_K_M, Q4_K_M | strict load, padded-matrix graph smoke, render matrix |
-| VAE | F32 | F16 after waveform gate only | decoder/waveform gate; no low-bit VAE |
+| VAE | F32 | F16 | strict tagged load, CPU/CUDA full-window waveform comparison; no low-bit VAE |
 
 Cantor keeps its existing explicit `lm`, `dit`, and `vae` paths in this
 milestone. It will not silently choose a quality tier. Measured combinations
@@ -245,6 +245,37 @@ loudly rather than silently changing a waveform.
   plus byte count against the staged local artifact. All eight passed. This
   validates the public remote objects without treating an authenticated upload
   response as verification evidence.
+
+### 2026-08-13 — F16 VAE storage artifact (local validation)
+
+- Added the separately tagged `--vae-f16` path to `levo-quantize`. It accepts
+  only the strict F32 VAE input and writes all 145 tensors as F16, preserving
+  the architecture/provenance metadata while adding `levo2.precision` profile,
+  revision, and complete source-artifact SHA-256. Re-running it on an F16 VAE
+  or attempting to use it for LeLM/Flow is refused.
+- The VAE loader requires those precision tags for F16 files. The decoder now
+  accepts F16 storage but promotes each weight, bias, and SnakeBeta parameter
+  to F32 inside its correctness graph; inputs, operators, accumulation, and
+  waveform output stay F32. This explicitly trades disk/weight bandwidth for
+  rounding of the stored values, not a silent F16-activation path.
+- Local artifact: `LeVo2-v2-vae-F16.gguf`, 168,805,120 bytes, SHA-256
+  `23e5b11558ae332fbe216d9a06775884469fcbf32236c26ab52defa18c5c8398`.
+  Its checksum sidecar and strict 145-tensor F16 inventory passed. It is
+  exactly derived from F32 VAE
+  `26f9ea955f586ed3d7668fe345a851ba222b8db95b406e3eea3c9565f4a0b515`.
+- On the full 1,000-frame (3,840,000-sample stereo) decoder window, compared
+  to an independently decoded native F32 VAE reference, CUDA measured maximum
+  error `2.65128e-3`, RMSE `6.56119e-5`, and cosine `0.999999914`; CPU measured
+  `2.65826e-3`, `6.56703e-5`, and `0.999999914`. Both pass the frozen F16
+  storage gate: max error ≤ `3e-3`, RMSE ≤ `1e-4`, cosine ≥ `0.9999998`.
+- F32 Flow plus F16 VAE rendered a finite two-second, 48 kHz stereo WAV on
+  CUDA (SHA-256 `e34a3dac905e71efd0ff4175e8f401a9d7f0e5f1e85324d281fb8a1d9b3f8cad`)
+  and CPU (`aa8e0502c0e534f3148356b610f390c7be5ca5c85867742d3f88674f20636da2`).
+  The CUDA cropped output is 61.93 dB SNR / 0.999999683 correlation versus
+  the identical F32 Flow/F32 VAE request.
+- Added direct CPU and CUDA GGML tests for F16 convolution, transpose
+  convolution, bias, and SnakeBeta promotion. Publication follows the normal
+  code commit/push and public remote verification sequence.
 
 ## Deviations
 

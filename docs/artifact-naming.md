@@ -37,6 +37,9 @@ LeVo2-v2-flow-Q4_K_M.gguf.manifest.json
 LeVo2-v2-vae-F32.gguf
 LeVo2-v2-vae-F32.gguf.sha256
 LeVo2-v2-vae-F32.gguf.manifest.json
+LeVo2-v2-vae-F16.gguf
+LeVo2-v2-vae-F16.gguf.sha256
+LeVo2-v2-vae-F16.gguf.manifest.json
 ```
 
 The full GGUF filename is retained as the manifest prefix so multiple

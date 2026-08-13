@@ -6,8 +6,10 @@ The renderer uses two independently checksummed files:
 
 - `LeVo2-v2-flow-F32.gguf` initially, then `LeVo2-v2-flow-F16.gguf` after its
   precision gate.
-- `LeVo2-v2-vae-F32.gguf` initially, then `LeVo2-v2-vae-F16.gguf` after its
-  waveform gate.
+- `LeVo2-v2-vae-F32.gguf`, plus `LeVo2-v2-vae-F16.gguf`. The F16 file has its
+  own tagged F32 source lineage and passed its separate full-window waveform
+  gate; it stores weights in F16 while the native decoder promotes them to F32
+  for correctness-graph execution.
 
 Each artifact has its own `.manifest.json` and `.sha256` companion. Conversion
 is deterministic and rejects any source checkpoint outside the pinned tensor

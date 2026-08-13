@@ -65,6 +65,12 @@ std::vector<float> read_tensor(ggml_tensor * tensor) {
     return result;
 }
 
+void set_f16(ggml_tensor * tensor, const float * values, std::size_t count) {
+    std::vector<ggml_fp16_t> converted(count);
+    ggml_fp32_to_fp16_row(values, converted.data(), static_cast<int64_t>(count));
+    ggml_backend_tensor_set(tensor, converted.data(), 0, converted.size() * sizeof(ggml_fp16_t));
+}
+
 } // namespace
 
 int main(int argc, char ** argv) {
@@ -80,7 +86,7 @@ int main(int argc, char ** argv) {
         if (!backend) throw std::runtime_error("cannot initialize GGML backend");
 
         constexpr std::size_t graph_nodes = 128;
-        const std::size_t context_size = 64 * ggml_tensor_overhead() +
+        const std::size_t context_size = 128 * ggml_tensor_overhead() +
                                          ggml_graph_overhead_custom(graph_nodes, false);
         std::vector<std::byte> storage(context_size);
         context_ptr context(ggml_init({context_size, storage.data(), true}));
@@ -113,10 +119,35 @@ int main(int argc, char ** argv) {
         ggml_tensor * snake_output = levo::detail::snake_beta(
             context.get(), snake_input, alpha_log, beta_log);
 
+        // The F16 VAE artifact retains F16 storage but each correctness-graph
+        // operator promotes its weights/biases/activation parameters to F32.
+        // Exercise every promoted path without relying on the large decoder.
+        ggml_tensor * f16_conv_weight = ggml_new_tensor_3d(
+            context.get(), GGML_TYPE_F16, 3, 1, 1);
+        ggml_tensor * f16_conv_bias = ggml_new_tensor_1d(
+            context.get(), GGML_TYPE_F16, 1);
+        ggml_tensor * f16_conv_output = levo::detail::conv_1d_f32(
+            context.get(), f16_conv_weight, conv_input, f16_conv_bias, 1, 1, 1);
+        ggml_tensor * f16_transpose_weight = ggml_new_tensor_3d(
+            context.get(), GGML_TYPE_F16, 4, 1, 1);
+        ggml_tensor * f16_transpose_bias = ggml_new_tensor_1d(
+            context.get(), GGML_TYPE_F16, 1);
+        ggml_tensor * f16_transpose_output = levo::detail::conv_transpose_1d_f32(
+            context.get(), f16_transpose_weight, transpose_input, f16_transpose_bias, 2, 1);
+        ggml_tensor * f16_alpha_log = ggml_new_tensor_3d(
+            context.get(), GGML_TYPE_F16, 1, 2, 1);
+        ggml_tensor * f16_beta_log = ggml_new_tensor_3d(
+            context.get(), GGML_TYPE_F16, 1, 2, 1);
+        ggml_tensor * f16_snake_output = levo::detail::snake_beta(
+            context.get(), snake_input, f16_alpha_log, f16_beta_log);
+
         ggml_tensor * graph_output = ggml_add(
             context.get(), ggml_sum(context.get(), conv_output),
             ggml_add(context.get(), ggml_sum(context.get(), transpose_output),
-                     ggml_sum(context.get(), snake_output)));
+                     ggml_add(context.get(), ggml_sum(context.get(), snake_output),
+                              ggml_add(context.get(), ggml_sum(context.get(), f16_conv_output),
+                                       ggml_add(context.get(), ggml_sum(context.get(), f16_transpose_output),
+                                                ggml_sum(context.get(), f16_snake_output))))));
         ggml_cgraph * graph = ggml_new_graph_custom(context.get(), graph_nodes, false);
         ggml_build_forward_expand(graph, graph_output);
 
@@ -151,6 +182,12 @@ int main(int argc, char ** argv) {
         ggml_backend_tensor_set(snake_input, snake_input_data.data(), 0, sizeof(snake_input_data));
         ggml_backend_tensor_set(alpha_log, alpha_log_data.data(), 0, sizeof(alpha_log_data));
         ggml_backend_tensor_set(beta_log, beta_log_data.data(), 0, sizeof(beta_log_data));
+        set_f16(f16_conv_weight, conv_weight_data.data(), conv_weight_data.size());
+        set_f16(f16_conv_bias, conv_bias_data.data(), conv_bias_data.size());
+        set_f16(f16_transpose_weight, transpose_weight_data.data(), transpose_weight_data.size());
+        set_f16(f16_transpose_bias, transpose_bias_data.data(), transpose_bias_data.size());
+        set_f16(f16_alpha_log, alpha_log_data.data(), alpha_log_data.size());
+        set_f16(f16_beta_log, beta_log_data.data(), beta_log_data.size());
 
         const ggml_status status = ggml_backend_graph_compute(backend.get(), graph);
         if (status != GGML_STATUS_SUCCESS) {
@@ -176,6 +213,12 @@ int main(int argc, char ** argv) {
         }
         expect_close(read_tensor(snake_output), snake_expected,
                      use_cuda ? 2.0e-5F : 1.0e-6F, "SnakeBeta");
+        expect_close(read_tensor(f16_conv_output), {4.5F, 8.5F, 12.5F, 11.5F},
+                     2.0e-3F, "F16 Conv1d promotion");
+        expect_close(read_tensor(f16_transpose_output), {1.25F, 3.25F, 3.25F, 2.25F},
+                     2.0e-3F, "F16 ConvTranspose1d promotion");
+        expect_close(read_tensor(f16_snake_output), snake_expected,
+                     2.0e-3F, "F16 SnakeBeta promotion");
         return 0;
     } catch (const std::exception & error) {
         std::cerr << error.what() << '\n';

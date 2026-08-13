@@ -29,8 +29,8 @@ public:
     static std::unique_ptr<vae_decoder> create(std::shared_ptr<const vae_model> model);
 
     // Input is channel-major F32 `[64,frames]`, matching NumPy C-order
-    // `[1,64,frames]`. Production accepts the strict F32 correctness artifact;
-    // F16 execution is introduced only after its independent parity gate.
+    // `[1,64,frames]`. F16 artifacts retain F16 storage but promote decoder
+    // weights to F32 in this correctness graph before every operator.
     [[nodiscard]] vae_decode_result decode(const std::vector<float> & latent,
                                            std::size_t frames,
                                            bool capture_stages = false,

@@ -61,7 +61,7 @@ int main(int argc, char ** argv) {
         if (!backend) throw std::runtime_error("cannot initialize GGML backend");
 
         const auto model = levo::detail::vae_model::load_gguf(
-            gguf, {backend.get(), true, false, true});
+            gguf, {backend.get(), true, true, true});
         const auto decoder = levo::detail::vae_decoder::create(model);
         const std::vector<float> latent = read_f32(latent_path);
         if (latent.size() % 64 != 0) throw std::runtime_error("latent fixture is not [64,T]");
