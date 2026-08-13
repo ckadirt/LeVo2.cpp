@@ -1,5 +1,10 @@
 # Implementation report
 
+> The active quantization milestone is recorded separately in
+> [`quantization-implementation-report.md`](quantization-implementation-report.md).
+> It uses a commit-and-push-per-validated-slice workflow and will be folded
+> into this historical report when the catalog is complete.
+
 ## Status
 
 The v0.1 LeLM implementation is complete: strict GGUF conversion/loading,

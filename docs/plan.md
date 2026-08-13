@@ -118,5 +118,8 @@ fork GGML.
 ## Post-v0.1 roadmap
 
 After v0.1, evaluate Q8_0, Q6_K, Q5_K_M, and Q4_K_M separately on both towers.
+The approved native quantization milestone now records its concrete artifact
+contract, strict layout rules, validation gates, and implementation log in
+[`quantization-implementation-report.md`](quantization-implementation-report.md).
 Native flow rendering, the VAE, stable C ABI, JNI, and Android/Cantor integration
 are independent future design and implementation milestones.

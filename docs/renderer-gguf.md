@@ -68,6 +68,17 @@ weight-normalized. Snake parameters end in `.alpha_log` and `.beta_log` to make
 their stored domain explicit. The C++ loader rejects leftover `weight_g` or
 `weight_v` tensors.
 
+## Quantized Flow layout
+
+The native quantizer may produce Q8_0, Q6_K, Q5_K_M, and Q4_K_M Flow files.
+Only transformer block dense matrices are quantized; controls and output remain
+F32. Because the logical 2200/4400 input dimensions do not align with GGML's
+quantization blocks, those matrix input axes are physically padded: Q8_0 to
+2208/4416 and K profiles to 2304/4608. The estimator zero-pads activation
+inputs only at those matrices, then returns the original logical dimensions.
+This layout is tagged and strictly validated; consumers must not infer it from
+a filename.
+
 ## Loader policy
 
 Both loaders are schema-strict: unknown/missing metadata, unknown/missing

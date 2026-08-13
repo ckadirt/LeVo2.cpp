@@ -88,7 +88,12 @@ preserved and documented instead of silently truncated.
   cast of all LeLM parameters.
 - Tensor dimensions are written in GGML order and validated against the source
   shape map.
-- No quantized tensor is emitted before v0.1.
+- The active post-v0.2 quantization contract is versioned in
+  [`quantization-implementation-report.md`](quantization-implementation-report.md).
+  LeLM may use Q8_0/Q6_K/Q5_K_M/Q4_K_M with a strict mixed per-tensor policy;
+  rank-0/1 values remain F32. Every quantized artifact carries the profile,
+  policy revision, and complete source-artifact SHA-256. A strict loader
+  verifies those fields and every expected tensor type.
 
 The loader checks metadata, tensor names, dimensions, element counts, type,
 alignment, offsets, and file bounds before creating backend allocations. Invalid,
