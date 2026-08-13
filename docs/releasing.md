@@ -74,6 +74,35 @@ available for fidelity-sensitive use.
 
 Verify the remotely downloaded artifact hash before announcing it.
 
+## Cloudflare R2 / Cantor catalog
+
+The initial Cantor catalog is generated from the frozen artifact identities in
+`tools/upload_ckpts.py`; its committed handoff copy is
+[`cloudflare-catalog-v1.json`](cloudflare-catalog-v1.json). Regenerate it
+without credentials with:
+
+```bash
+python3 tools/upload_ckpts.py --catalog-only
+```
+
+For a new immutable R2 release, install the isolated uploader dependencies,
+source the operator-managed R2 environment, and invoke the explicit publish
+mode:
+
+```bash
+source /venv/main/bin/activate
+uv pip install -r tools/requirements-cloudflare.txt
+set -a; . /workspace/.env; set +a
+python tools/upload_ckpts.py --publish
+```
+
+The publisher downloads, verifies, uploads, and deletes one pinned Hugging
+Face GGUF at a time. It refuses object-key overwrites, records local
+idempotency state under ignored `release-state/`, and validates public HEAD and
+byte-range responses before reporting success. A relay maintainer copies the
+tracked catalog into Cantor and adds the separately generated backend fragment;
+LeVo2 does not edit or deploy Cantor relay manifests.
+
 ## GitHub
 
 Development milestones are pushed to the private `origin/main`. At release:

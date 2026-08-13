@@ -1,0 +1,102 @@
+{
+  "schema": 1,
+  "models": [
+    {
+      "name": "levo2",
+      "licence": "Tencent SongGeneration License — academic, research, and education use only; commercial and production use prohibited.",
+      "engine": "levo2",
+      "variants": [
+        {
+          "tag": "1.0-fast",
+          "components": [
+            {
+              "role": "lm",
+              "blob": "sha256:9412bb0ef5373fd0b9085fd24e4b5ffa0d341efece3829067563816d44d4aeca",
+              "url": "https://cantor-ckpts.ckadirt.xyz/levo2-1.0/LeVo2-v2-medium-Q4_K_M.gguf",
+              "bytes": 1916558688,
+              "quant": "Q4_K_M"
+            },
+            {
+              "role": "dit",
+              "blob": "sha256:a3579de6915c5ea060072b83af4e158e729834a8a13f62f1b370ef82e7317c00",
+              "url": "https://cantor-ckpts.ckadirt.xyz/levo2-1.0/LeVo2-v2-flow-Q6_K.gguf",
+              "bytes": 707404288,
+              "quant": "Q6_K"
+            },
+            {
+              "role": "vae",
+              "blob": "sha256:23e5b11558ae332fbe216d9a06775884469fcbf32236c26ab52defa18c5c8398",
+              "url": "https://cantor-ckpts.ckadirt.xyz/levo2-1.0/LeVo2-v2-vae-F16.gguf",
+              "bytes": 168805120,
+              "quant": "F16"
+            }
+          ],
+          "needs": {
+            "vram_bytes": 4294967296,
+            "backends": ["cuda12", "vulkan", "cpu"]
+          }
+        },
+        {
+          "tag": "1.0-balanced",
+          "components": [
+            {
+              "role": "lm",
+              "blob": "sha256:5f46280c137a5ee425bd86d852165a1b6065684e9e401efc4b58889155a8a5c6",
+              "url": "https://cantor-ckpts.ckadirt.xyz/levo2-1.0/LeVo2-v2-large-Q6_K.gguf",
+              "bytes": 4102556992,
+              "quant": "Q6_K"
+            },
+            {
+              "role": "dit",
+              "blob": "sha256:a3579de6915c5ea060072b83af4e158e729834a8a13f62f1b370ef82e7317c00",
+              "url": "https://cantor-ckpts.ckadirt.xyz/levo2-1.0/LeVo2-v2-flow-Q6_K.gguf",
+              "bytes": 707404288,
+              "quant": "Q6_K"
+            },
+            {
+              "role": "vae",
+              "blob": "sha256:23e5b11558ae332fbe216d9a06775884469fcbf32236c26ab52defa18c5c8398",
+              "url": "https://cantor-ckpts.ckadirt.xyz/levo2-1.0/LeVo2-v2-vae-F16.gguf",
+              "bytes": 168805120,
+              "quant": "F16"
+            }
+          ],
+          "needs": {
+            "vram_bytes": 8589934592,
+            "backends": ["cuda12", "vulkan", "cpu"]
+          }
+        },
+        {
+          "tag": "1.0-quality",
+          "components": [
+            {
+              "role": "lm",
+              "blob": "sha256:368cba66fabbdca3d208d4c15a9c9c2059ea5d8ca2a822ee3a3f1d9f854134d5",
+              "url": "https://cantor-ckpts.ckadirt.xyz/levo2-1.0/LeVo2-v2-large-F16.gguf",
+              "bytes": 9986305440,
+              "quant": "F16"
+            },
+            {
+              "role": "dit",
+              "blob": "sha256:a3579de6915c5ea060072b83af4e158e729834a8a13f62f1b370ef82e7317c00",
+              "url": "https://cantor-ckpts.ckadirt.xyz/levo2-1.0/LeVo2-v2-flow-Q6_K.gguf",
+              "bytes": 707404288,
+              "quant": "Q6_K"
+            },
+            {
+              "role": "vae",
+              "blob": "sha256:23e5b11558ae332fbe216d9a06775884469fcbf32236c26ab52defa18c5c8398",
+              "url": "https://cantor-ckpts.ckadirt.xyz/levo2-1.0/LeVo2-v2-vae-F16.gguf",
+              "bytes": 168805120,
+              "quant": "F16"
+            }
+          ],
+          "needs": {
+            "vram_bytes": 21474836480,
+            "backends": ["cuda12", "vulkan", "cpu"]
+          }
+        }
+      ]
+    }
+  ]
+}

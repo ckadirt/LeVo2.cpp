@@ -32,3 +32,18 @@ Cantor relay and deploys the Worker.
 - Per maintainer direction, no Cantor relay manifest is edited or deployed by
   this implementation. The project will instead generate the exact manifest
   fragment and document the manual handoff.
+
+### 2026-08-13 — uploader contract implementation
+
+- Added `tools/upload_ckpts.py` with five unique pinned source identities:
+  three LeLM files plus the shared Flow Q6_K and VAE F16 files. It verifies the
+  expected byte length and SHA-256 before upload, rejects R2 overwrite attempts,
+  writes a local idempotency manifest, and verifies the public immutable/range
+  response contract after every publication.
+- Added the deterministic `docs/cloudflare-catalog-v1.json` handoff and tests
+  that prove it is generated from the publisher, uses the exact ABI role names,
+  uses `sha256:`-prefixed model digests, and changes only `lm` across tiers.
+- **Deviation recorded:** the referenced canonical `upload_ckpts.py` was not
+  present in this workspace or the available Cantor/ACE repositories. A local,
+  compatible implementation was added instead, including the required
+  botocore `request_checksum_calculation="when_required"` workaround for R2.

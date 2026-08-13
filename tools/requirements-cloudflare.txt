@@ -1,0 +1,5 @@
+# Immutable Cloudflare R2 publication helper dependencies.
+# botocore 1.36+ exposes request_checksum_calculation, required for R2 multipart
+# uploads that reject botocore's otherwise automatic CRC32 checksums.
+boto3>=1.36,<2
+huggingface_hub>=0.25,<1
