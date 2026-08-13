@@ -77,11 +77,14 @@ loader rejects a quantized Flow tensor without exactly this layout.
 
 ## Resumability and artifact identity
 
-The resume checkpoint format will be bumped and old blobs explicitly refused.
-LeLM, Flow, and VAE content SHA-256 values will become part of the relevant
-stage stamps. Source provenance alone is insufficient: two quantized files can
-share that provenance but produce different audio. The runtime will compute
-the digest from the GGUF bytes rather than trusting a sidecar.
+The resume checkpoint format is bumped and old blobs are explicitly refused.
+LeLM, Flow, and VAE content SHA-256 values are part of the relevant stage
+stamps. Source provenance alone is insufficient: two quantized files can share
+that provenance but produce different audio. The runtime computes the digest
+from the GGUF bytes rather than trusting a sidecar. DECODE verifies both the
+selected Flow and VAE digests against its completed `LEVOLT02` boundary before
+it allocates the decoder, so a component substitution after a pause fails
+loudly rather than silently changing a waveform.
 
 ## Milestone log
 
@@ -187,6 +190,43 @@ the digest from the GGUF bytes rather than trusting a sidecar.
 - The complete local LeLM profile set (Q8_0/Q6_K/Q5_K_M/Q4_K_M) has now passed
   its checksum and CUDA token-smoke gate. Frozen token and audio comparisons
   remain pending before Hugging Face publication.
+
+### 2026-08-13 — complete profile smoke and deterministic comparison
+
+- All Flow profiles now pass strict metadata/type/layout loading and produce a
+  finite 2-second, 48 kHz stereo IEEE-F32 WAV from the frozen `[3,50]` token
+  fixture on CUDA. Q8_0 had previously passed the equivalent CPU smoke; the
+  Q6_K, Q5_K_M, and Q4_K_M profiles also passed it. This exercises the actual
+  Q8/K padded matrix activation path, not a dequantized fallback.
+- Flow artifacts and CUDA output hashes: Q6_K is 707,404,288 bytes,
+  `a3579de6915c5ea060072b83af4e158e729834a8a13f62f1b370ef82e7317c00`,
+  WAV `67628465847efb24a04a289361a359ab6cafdbe36f02f95c75c37423db021cc0`;
+  Q5_K_M is 653,548,032 bytes,
+  `0c36bdda1148068aeca4e32abedeeaa9445b672e20f841d0fef84d250b447dcb`,
+  WAV `4239189ae3d66f05112a37f174d02d779641bd9ec90efe7d58ff89ef734549f5`;
+  Q4_K_M is 602,860,032 bytes,
+  `08cc21590702f1c2e9bc62b164d4ae82b9b95d1b1985e13329c2f9d3fae89edc`,
+  WAV `df0c108b24aaf0804a9ee1c6f5c581337e145d4137e08b41429db9147c90ab07`.
+- Against an F32 CUDA render of exactly the same fixture/noise/one-Euler-step
+  request, Flow Q8_0/Q6_K/Q5_K_M/Q4_K_M respectively measured
+  `13.505/17.754/10.842/8.098` dB SNR and
+  `0.978/0.992/0.958/0.919` waveform correlation. The full reproducible
+  fixture, artifact identities, output hashes, and LeLM greedy-token match
+  counts are frozen in
+  [`quantization-validation-matrix.json`](quantization-validation-matrix.json).
+  Q6_K is the closest profile on this cell; all profiles are published as
+  explicit user-selected trade-offs, not as identical-quality replacements.
+- The F16 LeLM reference and every low-bit LeLM profile generated a valid
+  `[3,50]` token tensor on CUDA. Greedy IDs are not bit-identical under
+  quantization (Q8_0 25/150, Q6_K 97/150, Q5_K_M 68/150, Q4_K_M 42/150
+  matching IDs), so the artifacts are accurately described as approximate
+  inference tiers rather than a parity claim.
+- Tightened the completed-boundary check: DECODE now verifies the selected Flow
+  GGUF digest as well as the VAE digest before decoding a `LEVOLT02` payload.
+  CUDA build plus `ctest --label-exclude cuda` passed 28/28 after this change.
+- All local artifact files, sidecars, and validation evidence are now ready for
+  the first Hugging Face publication transaction. The model-card update and
+  anonymous remote checksum verification are the remaining gates.
 
 ## Deviations
 

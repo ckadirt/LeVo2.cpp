@@ -12,12 +12,22 @@ tags:
 
 # LeVo2 v2-medium GGUF
 
-This repository contains the three GGUF components for LeVo2.cpp v0.2:
+This repository contains the v0.2 baseline GGUF components and the native
+post-v0.2 low-bit catalog. Select the LeLM and Flow files independently; VAE
+stays F32 for every combination.
 
 | File | Precision | Purpose | SHA-256 |
 | --- | --- | --- | --- |
 | `LeVo2-v2-medium-F16.gguf` | F16 | Lyrics/style to three LeVo token streams | `b765d0e79f17cf05c0acdc6cef8bfcd072104adfd8357bb0470f5b9ae91d9e64` |
+| `LeVo2-v2-medium-Q8_0.gguf` | Q8_0 | LeLM, largest low-bit tier | `706cd0b3fcb84c7d4522745331e679114a288deab5dfcad37d546ebb6d002291` |
+| `LeVo2-v2-medium-Q6_K.gguf` | Q6_K | LeLM, balanced low-bit tier | `06304f3f49ee6d1ed9265dde0651af199017cb6ca743d5f5011f6900a63a3c90` |
+| `LeVo2-v2-medium-Q5_K_M.gguf` | Q5_K_M + Q6_K | LeLM, compact mixed tier | `fc8616097d264d8b5437ab01f453d9ac1bfaba9ef834f3a47d728f0fd20724de` |
+| `LeVo2-v2-medium-Q4_K_M.gguf` | Q4_K_M + Q6_K | LeLM, smallest mixed tier | `9412bb0ef5373fd0b9085fd24e4b5ffa0d341efece3829067563816d44d4aeca` |
 | `LeVo2-v2-flow-F32.gguf` | F32 | Vocal/BGM tokens to 64-channel audio latents | `a8cf50dbecef243501b9b345109b1d2f283b3e22f4e4856715197e4b22129d10` |
+| `LeVo2-v2-flow-Q8_0.gguf` | Q8_0 + F32 controls | Flow, largest low-bit tier | `9e27b8d060edd8b57b8c3033b14260de5cfa08cde8e3c58532a3ce439bfced3a` |
+| `LeVo2-v2-flow-Q6_K.gguf` | Q6_K + F32 controls | Flow, balanced low-bit tier | `a3579de6915c5ea060072b83af4e158e729834a8a13f62f1b370ef82e7317c00` |
+| `LeVo2-v2-flow-Q5_K_M.gguf` | Q5_K_M/Q6_K + F32 controls | Flow, compact mixed tier | `0c36bdda1148068aeca4e32abedeeaa9445b672e20f841d0fef84d250b447dcb` |
+| `LeVo2-v2-flow-Q4_K_M.gguf` | Q4_K_M/Q6_K + F32 controls | Flow, smallest mixed tier | `08cc21590702f1c2e9bc62b164d4ae82b9b95d1b1985e13329c2f9d3fae89edc` |
 | `LeVo2-v2-vae-F32.gguf` | F32 | Audio latents to stereo 48 kHz waveform | `26f9ea955f586ed3d7668fe345a851ba222b8db95b406e3eea3c9565f4a0b515` |
 
 Each GGUF has a standard `.sha256` sidecar and a deterministic
@@ -43,26 +53,43 @@ cmake -S . -B build-cuda -DCMAKE_BUILD_TYPE=Release \
 cmake --build build-cuda -j
 ```
 
-Generate tokens and render them without Python:
+Generate tokens and render them without Python. This example uses the balanced
+Q6_K pairing; replace either selected file with a different listed tier when
+you want a different memory/quality trade-off:
 
 ```bash
 ./build-cuda/bin/levo-cli \
-  --model LeVo2-v2-medium-F16.gguf \
+  --model LeVo2-v2-medium-Q6_K.gguf \
   --lyrics lyrics.txt --prompt "female, pop" --duration 30 \
   --output tokens.npy --backend cuda --seed 1235
 
 ./build-cuda/bin/levo-render tokens.npy \
-  --flow-model LeVo2-v2-flow-F32.gguf \
+  --flow-model LeVo2-v2-flow-Q6_K.gguf \
   --vae-model LeVo2-v2-vae-F32.gguf \
   --output song.wav --backend cuda --steps 50 --cfg 1.5 --seed 1234
 ```
 
 The renderer writes stereo 48 kHz IEEE-F32 WAV and crops output to exactly
-`token_frames * 1920` samples per channel. The v0.2 baseline Flow/VAE artifacts
-remain F32. The post-v0.2 catalog adds explicitly selected Q8_0, Q6_K, Q5_K_M,
-and Q4_K_M Flow variants after their individual validation gates; VAE remains
-F32 until its separate F16 waveform gate passes. See the source project's
-quantization implementation report for the current publication state.
+`token_frames * 1920` samples per channel. The native loader verifies every
+quantized tensor type, policy revision, and Flow physical padded layout before
+running it. VAE remains F32 until its separate F16 waveform gate passes.
+
+## Quantization policy and selection
+
+The Q5_K_M and Q4_K_M files deliberately retain sensitive matrices at Q6_K:
+LeLM retains embeddings, output heads, conditioner tables, bridge weights,
+attention V/output, and FFN-down projections; Flow retains attention/FFN output
+projections. Flow controls, embeddings, normalizers, modulation tables, biases,
+and final output remain F32. This is a fixed, strict policy revision, not
+runtime dequantization or a name-only precision hint.
+
+Use the F16 LeLM and F32 Flow files when fidelity is the priority. Q6_K is the
+best deterministic Flow match in the frozen comparison below. Q8_0, Q5_K_M,
+and Q4_K_M are available as explicit capacity/quality trade-offs; Q4_K_M is
+the smallest and has the largest measured deviation. The source repository's
+`docs/quantization-implementation-report.md` and
+`docs/quantization-validation-matrix.json` contain the complete policy and
+reproducible identities.
 
 ## Provenance
 
@@ -100,9 +127,30 @@ fixture hashes, timings, GPU memory, deviations, and limitations are recorded
 in the source repository's `docs/renderer-implementation-report.md` and
 `docs/renderer-release-matrix.json`.
 
+Each low-bit file passed its exact sidecar checksum, strict native loader, and
+real CUDA smoke. Every low-bit Flow file also rendered a finite two-second,
+48 kHz stereo WAV through the native quantized graph on CUDA; Q6_K/Q5_K_M/
+Q4_K_M additionally passed CPU renders (Q8_0 had already done so). Against
+the same F32 Flow output with fixed tokens, noise, one Euler step, and seed,
+the measured waveform SNR/correlation was:
+
+| Flow tier | SNR vs F32 | Correlation vs F32 |
+| --- | ---: | ---: |
+| Q8_0 | 13.505 dB | 0.978 |
+| Q6_K | 17.754 dB | 0.992 |
+| Q5_K_M | 10.842 dB | 0.958 |
+| Q4_K_M | 8.098 dB | 0.919 |
+
+The LeLM tiers all completed the same CUDA greedy `[3,50]` token request.
+Quantization changes near-tied token choices, so neither token IDs nor audio
+are claimed bit-identical to F16/F32. Verify file bytes with the supplied
+sidecars before loading.
+
 ## Limitations
 
-- Flow and VAE are F32 only; there are no renderer quantizations.
+- The VAE is F32 only. Low-bit LeLM/Flow files are approximate inference tiers,
+  not F16/F32 parity claims; quality depends on the lyric, prompt, seed, and
+  sampler settings.
 - Input is lyrics plus an optional style description; audio-prompt encoding and
   source separation are not implemented natively.
 - PyTorch/CUDA and GGML can make different near-tied token choices for prompts

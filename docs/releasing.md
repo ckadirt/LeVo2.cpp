@@ -42,7 +42,8 @@ The renderer ships two additional artifacts and adds its own gates:
 ## Hugging Face
 
 Use public model repository `ckadirt/LeVo2-GGUF` only after the gates pass.
-Upload, each with its `.sha256` and `.manifest.json` sidecar:
+Upload every GGUF with its `.sha256` and `.manifest.json` sidecar. The baseline
+v0.2 files are:
 
 - `LeVo2-v2-medium-F16.gguf` (LeLM)
 - `LeVo2-v2-flow-F32.gguf` (Flow transformer)
@@ -51,8 +52,15 @@ Upload, each with its `.sha256` and `.manifest.json` sidecar:
   research-only restriction
 - Required license and third-party notices
 
-The renderer artifacts are F32 because that is the only precision with a passing
-gate. No F16 renderer artifact is published until it has one of its own.
+The native quantization catalog adds the four LeLM files
+`LeVo2-v2-medium-{Q8_0,Q6_K,Q5_K_M,Q4_K_M}.gguf` and the four Flow files
+`LeVo2-v2-flow-{Q8_0,Q6_K,Q5_K_M,Q4_K_M}.gguf`. The quantization implementation
+report and validation matrix must record each file's strict load, checksum,
+and native execution evidence before it is uploaded. A low-bit file is never
+silently substituted for a baseline file.
+
+VAE remains F32 because it is the only VAE precision with a passing waveform
+gate. No F16 VAE artifact is published until it has one of its own.
 
 Verify the remotely downloaded artifact hash before announcing it.
 
@@ -85,5 +93,5 @@ names are documented in `docs/artifact-naming.md`. CUDA archive users need a
 compatible NVIDIA driver; platform-specific CUDA runtime dependencies are not
 bundled.
 
-No quantized model is included. A quantized artifact receives its own parity
-report and manifest in a later release.
+The release binaries include `levo-quantize`, so users can inspect the native
+conversion contract locally. They never contain model weights.

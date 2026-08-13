@@ -1,0 +1,115 @@
+{
+  "schema_version": 1,
+  "date": "2026-08-13",
+  "runtime": {
+    "source_commit": "64c0bfb",
+    "backend": "RTX 4090 / CUDA0",
+    "policy_revision": "1"
+  },
+  "lelm": {
+    "fixture": {
+      "lyrics": "artifacts/dance-with-me/lyrics-en.txt",
+      "prompt": "female, pop",
+      "duration_seconds": 2,
+      "sampler": "greedy",
+      "shape": [3, 50],
+      "f16_token_sha256": "312ecf0ce1ae21507ba066d6a4fcb90dc5632f96e9f5925d2ee564cf3e02e92f"
+    },
+    "profiles": [
+      {
+        "profile": "Q8_0",
+        "artifact_sha256": "706cd0b3fcb84c7d4522745331e679114a288deab5dfcad37d546ebb6d002291",
+        "bytes": 2909949120,
+        "token_sha256": "cdf7c375e7f3cf236dc7fcefa2f1e5cee57b62ce9406a045c2f08b655f57bb7c",
+        "matching_token_ids": 25,
+        "token_ids": 150
+      },
+      {
+        "profile": "Q6_K",
+        "artifact_sha256": "06304f3f49ee6d1ed9265dde0651af199017cb6ca743d5f5011f6900a63a3c90",
+        "bytes": 2249071968,
+        "token_sha256": "37c15a3a0b2ea4d65cc8447d31ddb6f9e391ec4a2d50442b6ba598ae6a761fa3",
+        "matching_token_ids": 97,
+        "token_ids": 150
+      },
+      {
+        "profile": "Q5_K_M",
+        "artifact_sha256": "fc8616097d264d8b5437ab01f453d9ac1bfaba9ef834f3a47d728f0fd20724de",
+        "bytes": 2077777248,
+        "token_sha256": "d240ddc453d50a80704398110530de7050c7fe00e57f732f2e337f4379b10eff",
+        "matching_token_ids": 68,
+        "token_ids": 150
+      },
+      {
+        "profile": "Q4_K_M",
+        "artifact_sha256": "9412bb0ef5373fd0b9085fd24e4b5ffa0d341efece3829067563816d44d4aeca",
+        "bytes": 1916558688,
+        "token_sha256": "e5438d77fad3f72d0432f1099a1491205084447a1b63a6cc1ad9df38e0a693b6",
+        "matching_token_ids": 42,
+        "token_ids": 150
+      }
+    ]
+  },
+  "flow": {
+    "fixture": {
+      "tokens": "artifacts/render-parity/tokens-2s.npy",
+      "steps": 1,
+      "cfg": 1.5,
+      "seed": 1234,
+      "sample_rate": 48000,
+      "channels": 2,
+      "samples_per_channel": 96000,
+      "f32_cuda_wav_sha256": "96d1a02cc9e51397d63edfad8f2a8f411c022da917d2298abbf13caa47573cca"
+    },
+    "profiles": [
+      {
+        "profile": "Q8_0",
+        "artifact_sha256": "9e27b8d060edd8b57b8c3033b14260de5cfa08cde8e3c58532a3ce439bfced3a",
+        "bytes": 835813888,
+        "padded_input_layout": "hidden=2200->2208;intermediate=4400->4416",
+        "cuda_wav_sha256": "44dbf4c4c02074dbc249462b1f72a5eacb80b6e74451061408c762d3c35580b7",
+        "cpu_wav_sha256": "b0475936c0498564800448d3d91acc6993f90b34f31096e7919a3ecb40d3f322",
+        "rms_diff_vs_f32": 0.0189227304,
+        "peak_abs_diff_vs_f32": 0.316932708,
+        "snr_db_vs_f32": 13.505464,
+        "correlation_vs_f32": 0.977619054
+      },
+      {
+        "profile": "Q6_K",
+        "artifact_sha256": "a3579de6915c5ea060072b83af4e158e729834a8a13f62f1b370ef82e7317c00",
+        "bytes": 707404288,
+        "padded_input_layout": "hidden=2200->2304;intermediate=4400->4608",
+        "cuda_wav_sha256": "67628465847efb24a04a289361a359ab6cafdbe36f02f95c75c37423db021cc0",
+        "cpu_wav_sha256": "c6bad971c162fc5e065cd31b296e80c10b254859e89717de147e628e535e0c7d",
+        "rms_diff_vs_f32": 0.0116021034,
+        "peak_abs_diff_vs_f32": 0.188445833,
+        "snr_db_vs_f32": 17.754405,
+        "correlation_vs_f32": 0.991638625
+      },
+      {
+        "profile": "Q5_K_M",
+        "artifact_sha256": "0c36bdda1148068aeca4e32abedeeaa9445b672e20f841d0fef84d250b447dcb",
+        "bytes": 653548032,
+        "padded_input_layout": "hidden=2200->2304;intermediate=4400->4608",
+        "cuda_wav_sha256": "4239189ae3d66f05112a37f174d02d779641bd9ec90efe7d58ff89ef734549f5",
+        "cpu_wav_sha256": "e3e1a745935e07572ed2ae7114aad9ff38fa0619c657ace6e880161f2a8db689",
+        "rms_diff_vs_f32": 0.0257136865,
+        "peak_abs_diff_vs_f32": 0.307281192,
+        "snr_db_vs_f32": 10.841853,
+        "correlation_vs_f32": 0.958112128
+      },
+      {
+        "profile": "Q4_K_M",
+        "artifact_sha256": "08cc21590702f1c2e9bc62b164d4ae82b9b95d1b1985e13329c2f9d3fae89edc",
+        "bytes": 602860032,
+        "padded_input_layout": "hidden=2200->2304;intermediate=4400->4608",
+        "cuda_wav_sha256": "df0c108b24aaf0804a9ee1c6f5c581337e145d4137e08b41429db9147c90ab07",
+        "cpu_wav_sha256": "8b2a5b8f03013513fb8fc30c50690dddf146bd741fc0f54c8d9204957e3d40af",
+        "rms_diff_vs_f32": 0.0352666697,
+        "peak_abs_diff_vs_f32": 0.346319515,
+        "snr_db_vs_f32": 8.097851,
+        "correlation_vs_f32": 0.919452864
+      }
+    ]
+  }
+}

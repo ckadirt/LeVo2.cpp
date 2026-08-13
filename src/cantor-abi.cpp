@@ -827,6 +827,10 @@ cantor_status pause_decode_boundary() {
 
 cantor_status run_decode(cantor_ctx * context, const std::uint8_t * input, std::size_t input_size,
                          cantor_progress_fn progress, cantor_cancel_fn should_cancel, void * userdata) {
+    if (context->dit_path.empty()) {
+        set_error(CANTOR_ERR_MODEL, "[LeVo ABI] DECODE requires a dit component to verify its Flow boundary");
+        return CANTOR_ERR;
+    }
     if (context->vae_path.empty()) {
         set_error(CANTOR_ERR_MODEL, "[LeVo ABI] DECODE requires a vae component");
         return CANTOR_ERR;
@@ -860,6 +864,12 @@ cantor_status run_decode(cantor_ctx * context, const std::uint8_t * input, std::
         throw std::runtime_error("completed Flow boundary does not match its embedded CODES input");
     }
     if (cancelled(should_cancel, userdata)) return pause_decode_boundary();
+
+    const std::string flow_artifact_sha256 = levo::token_io::file_sha256(context->dit_path);
+    if (flow_artifact_sha256.empty()) throw std::runtime_error("cannot calculate Flow artifact digest");
+    if (metadata.stamp.artifact_sha256 != flow_artifact_sha256) {
+        throw std::runtime_error("cannot DECODE: Flow artifact stamp differs from the completed Flow boundary");
+    }
 
     ggml_backend_dev_t device = select_engine_device();
     levo::detail::configure_cuda_gemm_f32_accumulation(device);
