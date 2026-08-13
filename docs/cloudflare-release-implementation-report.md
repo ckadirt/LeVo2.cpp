@@ -2,9 +2,9 @@
 
 ## Status
 
-In progress. This is the live evidence record for the immutable R2 model and
-engine publication work. It supplements the existing quantization and v2-large
-reports.
+Implemented on 2026-08-13. All five starter model blobs and the CPU/Vulkan
+engine archives are public on R2. The CUDA engine entry remains an intentional
+maintainer-owned placeholder while its long-running CI build completes.
 
 ## Scope boundary
 
@@ -87,3 +87,17 @@ Cantor relay and deploys the Worker.
   conspicuous placeholder (`sha256` replacement text and byte count `0`) until
   its lengthy CI build finishes; it must be filled with that artifact's bare
   SHA-256 and byte size before relay validation/deployment.
+
+### 2026-08-13 — model publication complete
+
+- Published the five frozen GGUF objects under the immutable
+  `levo2-1.0/` namespace: medium Q4_K_M, large Q6_K, large F16, shared Flow
+  Q6_K, and shared VAE F16. The ignored private idempotency manifest records
+  all five identities and no source GGUF was retained by the uploader after
+  its one-at-a-time transfer.
+- Ran `python tools/upload_ckpts.py --verify-public` against every published
+  object. Each passed exact content length, `Cache-Control: public,
+  max-age=31536000, immutable`, `Accept-Ranges: bytes`, and a one-byte
+  HTTP 206 `Range: bytes=0-0` response.
+- Regenerated the tracked catalog and confirmed it remains byte-for-byte the
+  deterministic publisher output. The eight release-contract tests pass.
