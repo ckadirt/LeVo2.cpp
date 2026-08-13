@@ -411,3 +411,39 @@ Flow window checkpointing, VAE pause, and CLI flags remain pending.
   to the normal pause path. Backends without that hook observe cancellation as
   soon as their graph ends. Exact CPU/CUDA callback-latency measurements remain
   pending, so the 15-second target is not yet claimed.
+
+### Resumability implementation trace: adapter and real CUDA smoke
+
+- Added `levo-cantor`, a three-stage signal-aware CLI. It accepts fresh strict
+  request JSON or a self-identifying resume blob, infers the stage from the
+  magic, atomically writes a temporary checkpoint, fsyncs the file and parent
+  directory, then renames it. On DIFFUSE completion it persists `LEVOLT01`
+  before invoking DECODE, which makes DECODE's null-blob pause recoverable.
+- On the local RTX 4090 with the release F32 renderer GGUFs, real C ABI smoke
+  calls passed: a fresh DIFFUSE stop yielded `PAUSED/CANTOR_ERR_CANCEL` and a
+  256,790-byte `LEVOFL01`; a fresh-context retry reproduced it byte-for-byte.
+  A real stop after Euler step one of two, followed by a new-context resume,
+  produced an identical 256,766-byte `LEVOLT01` to an uninterrupted solve.
+  A one-step Flow solve took 0.575 seconds and one-window VAE decode took
+  2.76 seconds. DECODE cancellation returned `PAUSED` with a null blob.
+- The same release LeLM GGUF accepted a fresh CODES request and a new-context
+  `LEVOLM01` retry reproduced its 732-byte pause blob byte-for-byte (roughly
+  6.1 seconds including model load/prefill on this runner). This is an initial
+  cancellation/re-entry smoke, not the still-required full LeLM
+  uninterrupted-versus-mid-token-resume parity matrix.
+
+### Explicit implementation deviations and remaining gates
+
+- The Cantor context is cleanly re-enterable but does not yet retain loaded
+  models between stage calls: each stage scopes its backend/model allocation
+  and `cantor_engine_resident_*` reports zero. This preserves the established
+  Flow-before-VAE memory discipline and makes pause recovery correct, at the
+  cost of reload time. Resident model caching is deferred until it can keep
+  that memory policy and has eviction/re-entry tests.
+- Cantor ABI v1 supplies component paths but no backend selector. This engine
+  therefore chooses CUDA first, then another GPU, then CPU; the actual backend
+  is embedded in every paused blob and a changed backend is rejected on resume.
+- The release matrix still needs real full LeLM middle/final-token pauses and
+  repeated pauses, multi-window Flow resume, CPU pause latency measurement,
+  and the final resumed-WAV equality checks. The existing real smoke validates
+  the ABI/state boundaries only; it does not replace those gates.

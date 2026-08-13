@@ -183,12 +183,41 @@ does not instantiate upstream Python model code.
 See [the execution plan](docs/plan.md), [architecture contract](docs/architecture.md),
 [parity policy](docs/parity.md), and [implementation report](docs/implementation_report.md).
 
-The shared Cantor engine currently supports cross-process pause/resume for
-LeLM `CODES` and Flow `DIFFUSE`: it writes self-contained token or latent
-checkpoints rather than model/KV state. Its VAE `DECODE` stage retries from the
-durable Flow boundary if stopped; CLI checkpoint adapters are still pending.
-The full staged contract, determinism rules, and remaining validation gates are
-in the [resumability plan](docs/resumability-plan.md).
+## Resumable staged generation
+
+The shared Cantor engine supports cross-process pause/resume for LeLM `CODES`
+and Flow `DIFFUSE`: it writes self-contained token or latent checkpoints rather
+than model/KV state. Its VAE `DECODE` stage retries from the durable Flow
+boundary if stopped. `levo-cantor` is the corresponding command-line adapter;
+it accepts a strict fresh request JSON and atomically fsyncs each checkpoint.
+
+```json
+{
+  "lyrics": "Come back to the light",
+  "description": "warm indie pop, female vocal",
+  "duration_seconds": 20,
+  "seed": 1234,
+  "flow": { "seed": 5678, "euler_steps": 50, "cfg_scale": 1.5 }
+}
+```
+
+```bash
+./build-cuda/bin/levo-cantor \
+  --input request.json --checkpoint song.resume --output song.wav \
+  --lm LeVo2-v2-medium-F16.gguf \
+  --dit LeVo2-v2-flow-F32.gguf --vae LeVo2-v2-vae-F32.gguf
+
+# After a successful SIGINT/SIGTERM pause (exit 130), resume from only the blob.
+./build-cuda/bin/levo-cantor \
+  --resume song.resume --checkpoint song.resume --output song.wav \
+  --lm LeVo2-v2-medium-F16.gguf \
+  --dit LeVo2-v2-flow-F32.gguf --vae LeVo2-v2-vae-F32.gguf
+```
+
+`levo-cantor` keeps the last durable checkpoint on successful decode as well;
+delete it explicitly when it is no longer wanted. The full staged contract,
+determinism rules, and remaining validation gates are in the
+[resumability plan](docs/resumability-plan.md).
 
 The native renderer has its own
 [execution plan](docs/renderer-plan.md),
