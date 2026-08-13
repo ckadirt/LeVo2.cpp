@@ -59,6 +59,14 @@ report and validation matrix must record each file's strict load, checksum,
 and native execution evidence before it is uploaded. A low-bit file is never
 silently substituted for a baseline file.
 
+The v2-large extension adds an independent F16 LeLM and four matching LeLM
+tiers: `LeVo2-v2-large-{F16,Q8_0,Q6_K,Q5_K_M,Q4_K_M}.gguf`. They must retain
+the v2-large source revision/config digest, 452-tensor strict inventory, and
+their dedicated CUDA validation evidence in `docs/v2-large-validation-matrix.json`.
+Do not publish `v2-large`-named Flow or VAE duplicates: those renderer source
+weights are byte-identical shared v2 components, so a duplicated name would
+misrepresent provenance.
+
 The separately tagged `LeVo2-v2-vae-F16.gguf` is published only after its
 full-window F16-storage waveform gate. It is not a low-bit VAE: decoder
 operators promote F16 stored weights to F32, and the baseline F32 file remains

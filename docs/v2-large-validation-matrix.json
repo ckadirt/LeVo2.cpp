@@ -1,0 +1,152 @@
+{
+  "schema_version": 1,
+  "date": "2026-08-13",
+  "scope": "SongGeneration v2-large LeLM CUDA-only release validation",
+  "source": {
+    "repository": "lglg666/SongGeneration-v2-large",
+    "revision": "115805364ad74479fb3764fe65970c92faeb1a5a",
+    "model_bytes": 12899965446,
+    "model_sha256": "dc763aa9a76a22a87597c2faf9a51c24d13349ac754699b37e9068b483639def",
+    "config_bytes": 3352,
+    "config_sha256": "14a991bd7342b9dde348e6324afd44b5c6ecb1db8d0ed4d2dbe666b220b04c59"
+  },
+  "architecture": {
+    "embedding_length": 2048,
+    "feed_forward_length": 11008,
+    "main_blocks": 36,
+    "detail_blocks": 12,
+    "attention_heads": 16,
+    "tensor_count": 452
+  },
+  "environment": {
+    "backend": "CUDA0",
+    "gpu": "NVIDIA GeForce RTX 4090",
+    "driver": "595.84",
+    "vram_mib": 24564
+  },
+  "artifacts": [
+    {
+      "profile": "F16",
+      "filename": "LeVo2-v2-large-F16.gguf",
+      "bytes": 9986305440,
+      "sha256": "368cba66fabbdca3d208d4c15a9c9c2059ea5d8ca2a822ee3a3f1d9f854134d5"
+    },
+    {
+      "profile": "Q8_0",
+      "filename": "LeVo2-v2-large-Q8_0.gguf",
+      "bytes": 5310562912,
+      "sha256": "0b17c5d662d99de8e9de0607e1bc779c30e87389b922683217a128678fa7656f"
+    },
+    {
+      "profile": "Q6_K",
+      "filename": "LeVo2-v2-large-Q6_K.gguf",
+      "bytes": 4102556992,
+      "sha256": "5f46280c137a5ee425bd86d852165a1b6065684e9e401efc4b58889155a8a5c6"
+    },
+    {
+      "profile": "Q5_K_M",
+      "filename": "LeVo2-v2-large-Q5_K_M.gguf",
+      "bytes": 3761638720,
+      "sha256": "21c0d63654430acf7a004bc054a18a6e12edc60c5664ff7c507052a0ce5fee14"
+    },
+    {
+      "profile": "Q4_K_M",
+      "filename": "LeVo2-v2-large-Q4_K_M.gguf",
+      "bytes": 3440774464,
+      "sha256": "c0feff05364587001045df4d8915671b9a811dc6d4081fe0d213e06f765a0ca9"
+    }
+  ],
+  "token_smoke": {
+    "fixture": {
+      "lyrics_sha256": "c7c6fa8813308648b440c155530bb80d643e3f65cf98eff1dfaaf615768eb36c",
+      "description": "uplifting electronic pop, warm female vocal, English",
+      "duration_seconds_requested": 2,
+      "seed": 20260813,
+      "greedy": true
+    },
+    "profiles": [
+      {
+        "profile": "F16",
+        "frames": 3,
+        "token_sha256": "895e0ceaa583ba1ae907dce3e4e46fa0e57029231a121f6828a88d6677e1624e",
+        "model_load_seconds": 27.079467362,
+        "generation_seconds": 24.725496905,
+        "total_seconds": 52.608404449
+      },
+      {
+        "profile": "Q8_0",
+        "frames": 14,
+        "token_sha256": "658a16c5cb31acf1b92bc06fddfa9631496914c3b0154c658e03d3a36257901d",
+        "model_load_seconds": 14.683569674,
+        "generation_seconds": 7.054526341,
+        "total_seconds": 22.146313214
+      },
+      {
+        "profile": "Q6_K",
+        "frames": 50,
+        "token_sha256": "39da4c1f65e2d356d1b77244e92d2e8cd27b632798cccb7ef1175043bd412a46",
+        "model_load_seconds": 11.276747866,
+        "generation_seconds": 6.282214674,
+        "total_seconds": 17.975944711
+      },
+      {
+        "profile": "Q5_K_M",
+        "frames": 50,
+        "token_sha256": "0e96a2973eea9190eb7020a41900d0c8b45a048176b1ba1e9aad460d5ccf20e9",
+        "model_load_seconds": 10.307148062,
+        "generation_seconds": 6.009341818,
+        "total_seconds": 16.725463619
+      },
+      {
+        "profile": "Q4_K_M",
+        "frames": 13,
+        "token_sha256": "37f48ac6917f39f548e19134e59319c5e4b1d1432b1b3cd09ccfe2752bfa7677",
+        "model_load_seconds": 9.593609458,
+        "generation_seconds": 5.736487873,
+        "total_seconds": 15.744687401
+      }
+    ]
+  },
+  "pipeline_smoke": {
+    "lelm_profile": "Q6_K",
+    "token_frames": 50,
+    "flow_profile": "F32",
+    "vae_profile": "F16 storage / F32 graph",
+    "euler_steps": 50,
+    "render_seconds": 17.3398578,
+    "wav": {
+      "sample_rate": 48000,
+      "shape": [96000, 2],
+      "finite": true,
+      "rms": 0.19013642840990688,
+      "peak": 2.360363006591797
+    }
+  },
+  "full_song": {
+    "path": "artifacts/v2-large-english-120s/v2-large-english-120s.wav",
+    "lelm_profile": "F16",
+    "duration_seconds": 120,
+    "frames": 3000,
+    "token_sha256": "1bfa15e30cdc927b0b319ebaae152f6457886a9b75ad6ef51adada68e8dc67a6",
+    "generation_seconds": 314.655898793,
+    "flow_profile": "F32",
+    "vae_profile": "F16 storage / F32 graph",
+    "euler_steps": 50,
+    "render_seconds": 45.500650201,
+    "wav": {
+      "sha256": "f3473bd200df88ec33820f867c523cf8bc1df292bd0e4759f0f555a59c38edee",
+      "bytes": 46080044,
+      "sample_rate": 48000,
+      "samples_per_channel": 5760000,
+      "channels": 2,
+      "finite": true,
+      "rms": 0.41012327605821663,
+      "peak": 2.1334071159362793
+    }
+  },
+  "limitations": [
+    "A greedy smoke is a strict loader/execution gate, not a perceptual-quality comparison.",
+    "Different quantization profiles may make different near-tied token choices; token identity to F16 is not claimed.",
+    "No v2-large CPU generation or rendering was run for this release."
+  ]
+}

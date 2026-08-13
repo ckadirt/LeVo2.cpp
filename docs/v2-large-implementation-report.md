@@ -63,3 +63,50 @@ does not rewrite their historical validation.
   output-head rules now use the selected profile width, with a regression
   assertion for the v2-large shapes. Conversion is being retried from the
   verified local source only after that source/test fix.
+
+### 2026-08-13 — verified F16 conversion and five-profile CUDA matrix
+
+- Downloaded the pinned source into the local Hugging Face cache and verified
+  both exact byte counts and SHA-256 values before conversion. The corrected
+  strict converter emitted **452** runtime tensors / **4,988,100,608**
+  parameters in `LeVo2-v2-large-F16.gguf` (9,986,305,440 bytes,
+  `368cba66fabbdca3d208d4c15a9c9c2059ea5d8ca2a822ee3a3f1d9f854134d5`).
+- Generated the complete native LeLM catalog from that F16 source with policy
+  revision 1: Q8_0 (5,310,562,912 bytes), Q6_K (4,102,556,992 bytes), Q5_K_M
+  (3,761,638,720 bytes), and Q4_K_M (3,440,774,464 bytes). Every checksum
+  sidecar was recomputed and verified before validation.
+- Strict CUDA loading and deterministic greedy generation passed for F16 and
+  all four quantized artifacts on an RTX 4090 (driver 595.84, 24,564 MiB).
+  The compact fixture requested two seconds; some profiles emitted an earlier
+  valid EOS and therefore have different final frame counts. This is expected
+  model behavior, not a partial artifact. Exact token hashes and timings are
+  stored in [`v2-large-validation-matrix.json`](v2-large-validation-matrix.json).
+- A complete native CUDA pipeline gate used the Q6_K LeLM, shared F32 Flow,
+  and shared F16-storage VAE at 50 Euler steps. It produced 50 frames of
+  finite, non-silent, stereo 48 kHz audio in 17.34 s. The renderer is shared
+  by design; no fake `v2-large` Flow/VAE copies were created.
+- The CUDA build's full CTest suite passed **32/32**. No v2-large CPU
+  generation or render was performed; CPU was used only for offline GGUF
+  requantization.
+
+### 2026-08-13 — requested two-minute English CUDA song
+
+- Generated original English lyrics and sampled exactly 3,000 F16 v2-large
+  frames (120.0 s) on CUDA with seed `2026081301`. Token generation took
+  314.656 s, including 26.967 s model load; token SHA-256 is
+  `1bfa15e30cdc927b0b319ebaae152f6457886a9b75ad6ef51adada68e8dc67a6`.
+- Rendered those tokens with the shared F32 Flow and F16-storage VAE at the
+  normal 50 Euler steps. The output is a finite, non-silent 48 kHz stereo
+  IEEE-F32 WAV with 5,760,000 samples/channel (120.0 s), SHA-256
+  `f3473bd200df88ec33820f867c523cf8bc1df292bd0e4759f0f555a59c38edee`.
+  Rendering took 45.501 s over four Flow windows.
+- The ignored working artifact directory is
+  `artifacts/v2-large-english-120s/`; it contains the lyrics, canonical token
+  artifact plus provenance, WAV, and WAV provenance. The validation matrix
+  records its exact model identities and audio statistics.
+
+### Publication status
+
+The local catalog and documentation are complete and checksum-verified. Public
+Hugging Face publication and anonymous LFS verification are the remaining
+steps; their immutable revision will be appended here rather than inferred.

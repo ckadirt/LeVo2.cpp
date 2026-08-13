@@ -10,11 +10,13 @@ tags:
   - songgeneration
 ---
 
-# LeVo2 v2-medium GGUF
+# LeVo2 v2-medium and v2-large GGUF
 
-This repository contains the v0.2 baseline GGUF components and the native
-post-v0.2 low-bit catalog. Select the LeLM and Flow files independently; VAE
-stays F32 for every combination.
+This repository contains v2-medium and v2-large LeLM GGUFs, shared v0.2
+renderer components, and their native low-bit catalog. Select one LeLM scale
+and one Flow precision independently. The Flow and VAE are deliberately shared
+between medium and large: SongGeneration v2-large changes only the LeLM scale,
+not the separate-token Flow checkpoint or Stable Audio 1920 decoder.
 
 | File | Precision | Purpose | SHA-256 |
 | --- | --- | --- | --- |
@@ -23,6 +25,11 @@ stays F32 for every combination.
 | `LeVo2-v2-medium-Q6_K.gguf` | Q6_K | LeLM, balanced low-bit tier | `06304f3f49ee6d1ed9265dde0651af199017cb6ca743d5f5011f6900a63a3c90` |
 | `LeVo2-v2-medium-Q5_K_M.gguf` | Q5_K_M + Q6_K | LeLM, compact mixed tier | `fc8616097d264d8b5437ab01f453d9ac1bfaba9ef834f3a47d728f0fd20724de` |
 | `LeVo2-v2-medium-Q4_K_M.gguf` | Q4_K_M + Q6_K | LeLM, smallest mixed tier | `9412bb0ef5373fd0b9085fd24e4b5ffa0d341efece3829067563816d44d4aeca` |
+| `LeVo2-v2-large-F16.gguf` | F16 | v2-large lyrics/style to three LeVo token streams | `368cba66fabbdca3d208d4c15a9c9c2059ea5d8ca2a822ee3a3f1d9f854134d5` |
+| `LeVo2-v2-large-Q8_0.gguf` | Q8_0 | v2-large LeLM, largest low-bit tier | `0b17c5d662d99de8e9de0607e1bc779c30e87389b922683217a128678fa7656f` |
+| `LeVo2-v2-large-Q6_K.gguf` | Q6_K | v2-large LeLM, balanced low-bit tier | `5f46280c137a5ee425bd86d852165a1b6065684e9e401efc4b58889155a8a5c6` |
+| `LeVo2-v2-large-Q5_K_M.gguf` | Q5_K_M + Q6_K | v2-large LeLM, compact mixed tier | `21c0d63654430acf7a004bc054a18a6e12edc60c5664ff7c507052a0ce5fee14` |
+| `LeVo2-v2-large-Q4_K_M.gguf` | Q4_K_M + Q6_K | v2-large LeLM, smallest mixed tier | `c0feff05364587001045df4d8915671b9a811dc6d4081fe0d213e06f765a0ca9` |
 | `LeVo2-v2-flow-F32.gguf` | F32 | Vocal/BGM tokens to 64-channel audio latents | `a8cf50dbecef243501b9b345109b1d2f283b3e22f4e4856715197e4b22129d10` |
 | `LeVo2-v2-flow-Q8_0.gguf` | Q8_0 + F32 controls | Flow, largest low-bit tier | `9e27b8d060edd8b57b8c3033b14260de5cfa08cde8e3c58532a3ce439bfced3a` |
 | `LeVo2-v2-flow-Q6_K.gguf` | Q6_K + F32 controls | Flow, balanced low-bit tier | `a3579de6915c5ea060072b83af4e158e729834a8a13f62f1b370ef82e7317c00` |
@@ -55,12 +62,13 @@ cmake --build build-cuda -j
 ```
 
 Generate tokens and render them without Python. This example uses the balanced
-Q6_K pairing; replace either selected file with a different listed tier when
-you want a different memory/quality trade-off:
+v2-large Q6_K pairing; choose the matching v2-medium file instead when that
+smaller LeLM is preferred, and replace either selected precision tier when you
+want a different memory/quality trade-off:
 
 ```bash
 ./build-cuda/bin/levo-cli \
-  --model LeVo2-v2-medium-Q6_K.gguf \
+  --model LeVo2-v2-large-Q6_K.gguf \
   --lyrics lyrics.txt --prompt "female, pop" --duration 30 \
   --output tokens.npy --backend cuda --seed 1235
 
@@ -99,7 +107,8 @@ reproducible identities.
 | Input | Pinned revision |
 | --- | --- |
 | LeVo source | `levo-demo/LeVo@653cbcf4716101834900c75b7d5da43b07e15d5b` |
-| LeLM checkpoint | `lglg666/SongGeneration-v2-medium@7d91660ebfa041e29bace194f5631e775796f600` |
+| v2-medium LeLM checkpoint | `lglg666/SongGeneration-v2-medium@7d91660ebfa041e29bace194f5631e775796f600` |
+| v2-large LeLM checkpoint | `lglg666/SongGeneration-v2-large@115805364ad74479fb3764fe65970c92faeb1a5a` |
 | Flow/VAE runtime | `lglg666/SongGeneration-Runtime@cc258cc694a63114c61684cc26d0583b8ad777d0` |
 | GGML | `ggml-org/ggml@8846b79e66747bb9f68597420e95114c177315ce` |
 
@@ -144,10 +153,13 @@ the measured waveform SNR/correlation was:
 | Q5_K_M | 10.842 dB | 0.958 |
 | Q4_K_M | 8.098 dB | 0.919 |
 
-The LeLM tiers all completed the same CUDA greedy `[3,50]` token request.
-Quantization changes near-tied token choices, so neither token IDs nor audio
-are claimed bit-identical to F16/F32. Verify file bytes with the supplied
-sidecars before loading.
+Every v2-medium tier and every v2-large tier completed its strict CUDA load and
+greedy token smoke. Quantization changes near-tied token choices, so neither
+token IDs nor audio are claimed bit-identical to F16/F32. The v2-large source
+repository records its immutable inputs, 452-tensor inventory, all five
+artifact identities, CUDA timings, a Q6_K token-to-WAV gate, and a 120-second
+F16 song in `docs/v2-large-validation-matrix.json`. Verify file bytes with the
+supplied sidecars before loading.
 
 The F16 VAE passed its independent 1,000-frame full-window storage comparison
 against a native F32 VAE reference on CPU and CUDA. CUDA measured `2.65128e-3`

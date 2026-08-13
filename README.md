@@ -3,10 +3,11 @@
 Portable C++17/GGML inference for the LeVo 2 hierarchical audio language model.
 
 The v0.1 milestone generates three streams of LeVo audio tokens from lyrics and
-a style description; the pinned v2-medium F16 LeLM path is implemented and
-parity-checked. The v0.2 milestone adds the native Flow/VAE renderer, so tokens
+a style description; strict v2-medium and v2-large F16 LeLM paths are
+implemented. The v0.2 milestone adds the native Flow/VAE renderer, so tokens
 become a 48 kHz stereo waveform without Python. The official Python decoder
-remains available as the reference oracle.
+remains available as the reference oracle. v2-large reuses the exact same
+separate-token Flow and VAE renderer components as v2-medium.
 
 > **License:** academic, research, and education use only. Commercial and
 > production use are prohibited by the upstream SongGeneration terms.
@@ -36,9 +37,10 @@ ctest --test-dir build-cuda --output-on-failure
 
 The CLI can enumerate backends, run a deterministic GGML operation, or generate
 the canonical three-stream token artifact using only assets embedded in GGUF.
-Download `LeVo2-v2-medium-F16.gguf` and its checksum/manifest from
+Download either `LeVo2-v2-medium-F16.gguf` or `LeVo2-v2-large-F16.gguf` and
+its checksum/manifest from
 [`ckadirt/LeVo2-GGUF`](https://huggingface.co/ckadirt/LeVo2-GGUF), then verify
-it with `sha256sum -c LeVo2-v2-medium-F16.gguf.sha256`.
+it with its matching `sha256sum -c` sidecar.
 
 Example commands:
 
@@ -48,7 +50,7 @@ Example commands:
 ./build-cuda/bin/levo-cli --smoke cuda
 
 ./build-cuda/bin/levo-cli \
-  --model LeVo2-v2-medium-F16.gguf \
+  --model LeVo2-v2-large-F16.gguf \
   --lyrics lyrics.txt \
   --prompt "female, pop" \
   --duration 30 \
@@ -177,15 +179,17 @@ renderer default is 50 Euler steps.
 ```bash
 python -m pip install -r convert/requirements.txt
 python convert/levo2_to_gguf.py /path/to/model.pt \
+  --variant v2-large \
   --tokenizer-dir /path/to/Qwen2-7B \
   --config /path/to/config.yaml \
   --dtype F16 \
-  --output LeVo2-v2-medium-F16.gguf
+  --output LeVo2-v2-large-F16.gguf
 ```
 
 Conversion emits the GGUF, a deterministic `.manifest.json`, and a `.sha256`
-sidecar. The converter accepts only the pinned v2-medium tensor inventory and
-does not instantiate upstream Python model code.
+sidecar. The converter accepts only the selected pinned v2-medium or v2-large
+tensor inventory, verifies that profile's checkpoint/config size and SHA-256,
+and does not instantiate upstream Python model code.
 
 See [the execution plan](docs/plan.md), [architecture contract](docs/architecture.md),
 [parity policy](docs/parity.md), and [implementation report](docs/implementation_report.md).
