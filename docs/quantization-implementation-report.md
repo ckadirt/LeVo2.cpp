@@ -170,9 +170,23 @@ the digest from the GGUF bytes rather than trusting a sidecar.
   CUDA greedy generation completed as a valid `[3,50]` token artifact;
   token payload SHA-256
   `d240ddc453d50a80704398110530de7050c7fe00e57f732f2e337f4379b10eff`.
-- Q4_K_M conversion is in progress. Q6_K/Q5_K_M are deliberately not yet
-  published: the full LeLM and Flow profile matrix, frozen comparison, and
+- At this point Q4_K_M was the remaining LeLM conversion. No K-profile is
+  published yet: the full LeLM and Flow profile matrix, frozen comparison, and
   release-side manifest review remain publication gates.
+
+### 2026-08-13 — LeLM Q4_K_M smoke completed (local only)
+
+- Local Q4_K_M: `LeVo2-v2-medium-Q4_K_M.gguf`, 1,916,558,688 bytes,
+  SHA-256 `9412bb0ef5373fd0b9085fd24e4b5ffa0d341efece3829067563816d44d4aeca`.
+  The checksum sidecar passed. Its inventory is 84 F32 vectors, 160 Q4_K
+  matrices, and 136 Q6_K promoted matrices, exactly as policy revision 1
+  requires.
+- The strict CUDA loader completed the same 2-second greedy request and wrote
+  a valid `[3,50]` token artifact; payload SHA-256
+  `e5438d77fad3f72d0432f1099a1491205084447a1b63a6cc1ad9df38e0a693b6`.
+- The complete local LeLM profile set (Q8_0/Q6_K/Q5_K_M/Q4_K_M) has now passed
+  its checksum and CUDA token-smoke gate. Frozen token and audio comparisons
+  remain pending before Hugging Face publication.
 
 ## Deviations
 
