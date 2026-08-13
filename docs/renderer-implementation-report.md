@@ -250,3 +250,20 @@ build root; and the corrected binary accepts the public backend spelling
 `cuda`, not its diagnostic output label `CUDA0`. The helpers were corrected
 against the tracked manifest and CLI contracts. The hashes, binaries,
 thresholds, test fixtures, and published revision were unchanged.
+
+### Source release audit
+
+The source candidate at `e5d7e9d024f5da089824b2e35c7f42141f2a1b40` had a
+clean worktree and passed `git diff --check`. Its GGML submodule resolves to the
+pinned `8846b79e66747bb9f68597420e95114c177315ce`. Required license,
+third-party notice, release instructions, matrix, and fixture-contract files
+are tracked. A tracked-content scan found no Hugging Face or GitHub
+credential-shaped values, and the largest tracked regular file is 2.36 MB, so
+no GGUF, NPY, WAV, or other generated release blob entered source control.
+
+With GitHub and Hugging Face credential variables removed and Git credential
+helpers disabled, a fresh recursive clone resolved to that candidate and the
+pinned GGML revision. A new CPU Release configuration built successfully and
+passed all 21 CTests. The subsequent audit-closure commit changes only this
+documentation; the final remote commit is re-fetched and retested before its
+annotated source tag is created.
