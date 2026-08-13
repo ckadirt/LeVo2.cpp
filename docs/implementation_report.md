@@ -449,3 +449,12 @@ Flow window checkpointing, VAE pause, and CLI flags remain pending.
   repeated pauses, multi-window Flow resume, CPU pause latency measurement,
   and the final resumed-WAV equality checks. The existing real smoke validates
   the ABI/state boundaries only; it does not replace those gates.
+
+### Final implementation validation snapshot
+
+- Clean CPU build and CTest passed **26/26** on 2026-08-13.
+- Clean CUDA build (RTX 4090, CUDA architecture 89) and CTest passed **30/30**,
+  including CUDA backend smoke, CUDA audio operations, CUDA precision, and VAE
+  test registration. The asset-free test set is intentionally fast; the
+  real-model smoke results and remaining release-matrix gates above are the
+  applicable evidence for the new staged ABI.
