@@ -55,7 +55,9 @@ void append_model_row(std::vector<float> & destination, const conditioning_outpu
 } // namespace
 
 std::vector<float> solve_flow_euler(const euler_input & input, std::size_t steps,
-                                    const velocity_callback & velocity) {
+                                    const velocity_callback & velocity,
+                                    const euler_progress_callback & progress,
+                                    const cancellation_callback & cancelled) {
     if (steps == 0) fail("Euler step count must be positive");
     if (!velocity) fail("Euler velocity callback is required");
     const std::size_t elements = element_count(input.frames, input.latent_dim, "Euler state");
@@ -70,6 +72,7 @@ std::vector<float> solve_flow_euler(const euler_input & input, std::size_t steps
     const float dt = 1.0F / static_cast<float>(steps);
     std::vector<float> state = input.initial_noise;
     for (std::size_t step = 0; step < steps; ++step) {
+        if (cancelled && cancelled()) throw operation_cancelled();
         const float time = static_cast<float>(step) * dt;
         const float noise_scale = 1.0F - (1.0F - input.sigma_min) * time;
         for (std::size_t frame = 0; frame < input.incontext_frames; ++frame) {
@@ -84,6 +87,7 @@ std::vector<float> solve_flow_euler(const euler_input & input, std::size_t steps
         require_finite(current_velocity, "Euler velocity");
         for (std::size_t element = 0; element < elements; ++element) state[element] += dt * current_velocity[element];
         require_finite(state, "Euler state");
+        if (progress) progress(step + 1U, steps);
     }
     const std::size_t context_elements = input.incontext_frames * input.latent_dim;
     std::copy_n(input.normalized_incontext.begin(), context_elements, state.begin());
@@ -173,6 +177,8 @@ render_output renderer::render(const render_input & input, const render_options 
     result.windows.reserve(windows_count);
     std::vector<float> prior_raw;
     for (std::size_t window_index = 0; window_index < windows_count; ++window_index) {
+        if (options.cancelled && options.cancelled()) throw operation_cancelled();
+        if (options.progress) options.progress(window_index + 1U, windows_count, 0, steps);
         const std::size_t token_offset = window_index * hop_frames;
         const std::size_t incontext_frames = window_index == 0 ? input.initial_incontext_frames : overlap_frames;
         std::vector<int32_t> vocal(window_frames), bgm(window_frames), masks(window_frames, 2);
@@ -232,7 +238,12 @@ render_output renderer::render(const render_input & input, const render_options 
         };
         const euler_input solver_input{condition.initial_noise, condition.normalized_incontext,
                                        window_frames, latent_dim, incontext_frames, hp.sigma_min};
-        const std::vector<float> normalized = solve_flow_euler(solver_input, steps, evaluate_velocity);
+        const std::vector<float> normalized = solve_flow_euler(
+            solver_input, steps, evaluate_velocity,
+            [&options, window_index, windows_count](std::size_t completed, std::size_t total) {
+                if (options.progress) options.progress(window_index + 1U, windows_count, completed, total);
+            },
+            options.cancelled);
         latent_window window;
         window.input_offset_frames = token_offset;
         window.normalized_latents = normalized;

@@ -9,6 +9,7 @@
 #include "ggml-backend.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdlib>
 #include <limits>
@@ -171,6 +172,16 @@ std::array<bool, 3> ended_states(const eos_tracker & tracker) {
     return {{tracker.ended(0), tracker.ended(1), tracker.ended(2)}};
 }
 
+using progress_clock = std::chrono::steady_clock;
+
+double elapsed_seconds(progress_clock::time_point begin, progress_clock::time_point end = progress_clock::now()) {
+    return std::chrono::duration<double>(end - begin).count();
+}
+
+void check_cancelled(const cancellation_callback & cancelled) {
+    if (cancelled && cancelled()) throw operation_cancelled();
+}
+
 } // namespace
 
 namespace detail {
@@ -234,7 +245,16 @@ generation_result run_generation_controller(
     eos_tracker eos(3, hparams.eos_token_id);
     const std::size_t total_steps = delayed.sequence_steps() - 1;
 
+    if (progress) {
+        generation_progress value;
+        value.stage = generation_stage::generating;
+        value.total_steps = total_steps;
+        value.requested_frames = frames;
+        progress(value);
+    }
+
     for (std::size_t step = 1; step < delayed.sequence_steps(); ++step) {
+        check_cancelled(config.cancelled);
         // The upstream order matters: sample every head from the same CFG
         // logits first, then scatter-mask invalid delayed positions. History
         // records those masked special values for the next repetition window.
@@ -252,7 +272,13 @@ generation_result run_generation_controller(
             delayed_input[stream] = static_cast<int32_t>(next[stream]);
         }
         if (progress) {
-            progress(generation_progress{step, total_steps, frames, ended_states(eos)});
+            generation_progress value;
+            value.stage = generation_stage::generating;
+            value.completed_steps = step;
+            value.total_steps = total_steps;
+            value.requested_frames = frames;
+            value.ended = ended_states(eos);
+            progress(value);
         }
 
         // Once every stream has an EOS, no later value can affect the final
@@ -292,6 +318,25 @@ generation_result generate_tokens(const generation_config & config,
         throw std::invalid_argument("a GGUF model path is required");
     }
     validate_duration_bounds(config);
+    const auto total_started = progress_clock::now();
+    auto stage_started = total_started;
+    generation_stage current_stage = generation_stage::initializing_backend;
+    const auto emit = [&](generation_progress value = {}) {
+        const auto now = progress_clock::now();
+        value.stage = current_stage;
+        value.elapsed_seconds = elapsed_seconds(total_started, now);
+        value.stage_elapsed_seconds = elapsed_seconds(stage_started, now);
+        if (progress) progress(value);
+        check_cancelled(config.cancelled);
+    };
+    const auto begin_stage = [&](generation_stage stage) {
+        current_stage = stage;
+        stage_started = progress_clock::now();
+        emit();
+    };
+
+    generation_timings timings;
+    begin_stage(generation_stage::initializing_backend);
     ggml_backend_dev_t device = select_device(config.backend, config.device_index);
     // The released PyTorch model accumulates F16 GEMMs in FP32. GGML exposes
     // the matching upstream cuBLAS path through this environment switch. Its
@@ -303,16 +348,24 @@ generation_result generate_tokens(const generation_config & config,
     if (!backend) {
         fail("failed to initialize the requested GGML backend");
     }
+    timings.backend_seconds = elapsed_seconds(stage_started);
+
+    begin_stage(generation_stage::loading_model);
     detail::model_load_options load_options;
     load_options.backend = backend.get();
     const std::shared_ptr<detail::model> model = detail::model::load_gguf(
         config.model_path.string(), load_options);
+    timings.model_load_seconds = elapsed_seconds(stage_started);
+
+    begin_stage(generation_stage::preparing_conditioning);
     const ByteLevelBPETokenizer tokenizer = ByteLevelBPETokenizer::load_embedded(
         model->tokenizer().tokens, model->tokenizer().merges,
         model->tokenizer().added_tokens_json, model->tokenizer().config_json);
     const detail::conditioning_result conditioning = detail::prepare_conditioning(
         *model, tokenizer, config.lyrics, config.description);
+    timings.conditioning_seconds = elapsed_seconds(stage_started);
 
+    begin_stage(generation_stage::prefilling);
     std::unique_ptr<detail::kv_session> conditional = detail::kv_session::create(model, true);
     std::unique_ptr<detail::kv_session> null_branch = detail::kv_session::create(model, true);
     // Populate each branch's dense prefix, then decode delayed slot zero (the
@@ -327,14 +380,29 @@ generation_result generate_tokens(const generation_config & config,
     const detail::lm_output null_initial = null_branch->decode(special, special, special);
     const detail::generation_logits initial_logits = cfg_logits_from_outputs(
         conditional_initial, null_initial, config.cfg_scale);
+    timings.prefill_seconds = elapsed_seconds(stage_started);
 
+    begin_stage(generation_stage::generating);
+    const auto generation_started = stage_started;
+    generation_progress latest_generation;
+    const generation_progress_callback timed_progress = [&](const generation_progress & source) {
+        generation_progress value = source;
+        const auto now = progress_clock::now();
+        value.stage = generation_stage::generating;
+        value.elapsed_seconds = elapsed_seconds(total_started, now);
+        value.stage_elapsed_seconds = elapsed_seconds(generation_started, now);
+        latest_generation = value;
+        if (progress) progress(value);
+        check_cancelled(config.cancelled);
+    };
     generation_result result = detail::run_generation_controller(
         model->hparams(), config, initial_logits,
         [&conditional, &null_branch, scale = config.cfg_scale](const std::array<int32_t, 3> & input) {
             return cfg_logits_from_outputs(conditional->decode(input[0], input[1], input[2]),
                                            null_branch->decode(input[0], input[1], input[2]), scale);
         },
-        std::move(progress));
+        timed_progress);
+    timings.generation_seconds = elapsed_seconds(generation_started);
     result.backend_name = ggml_backend_name(backend.get());
     result.model_name = model->provenance().name;
     result.model_revision = model->provenance().model_revision;
@@ -342,6 +410,15 @@ generation_result generate_tokens(const generation_config & config,
     result.runtime_revision = model->provenance().runtime_revision;
     result.tokenizer_revision = model->provenance().tokenizer_revision;
     result.tokenizer_sha256 = model->provenance().tokenizer_sha256;
+    timings.total_seconds = elapsed_seconds(total_started);
+    result.timings = timings;
+
+    current_stage = generation_stage::complete;
+    stage_started = progress_clock::now();
+    generation_progress complete = latest_generation;
+    complete.requested_frames = result.requested_frames;
+    complete.ended = result.ended;
+    emit(complete);
     return result;
 }
 

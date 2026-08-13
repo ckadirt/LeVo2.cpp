@@ -1,5 +1,6 @@
 #pragma once
 
+#include "levo.h"
 #include "levo-flow-conditioning.h"
 #include "levo-flow-estimator.h"
 
@@ -25,6 +26,8 @@ struct euler_input {
 
 using velocity_callback = std::function<std::vector<float>(
         const std::vector<float> & state, float timestep)>;
+using euler_progress_callback = std::function<void(
+        std::size_t completed_steps, std::size_t total_steps)>;
 
 // Fixed-step Euler with the official in-context interpolation and final hard
 // context restore.  `velocity` receives the state after interpolation at each
@@ -32,7 +35,9 @@ using velocity_callback = std::function<std::vector<float>(
 [[nodiscard]] std::vector<float> solve_flow_euler(
         const euler_input & input,
         std::size_t steps,
-        const velocity_callback & velocity);
+        const velocity_callback & velocity,
+        const euler_progress_callback & progress = {},
+        const cancellation_callback & cancelled = {});
 
 // One denormalized [window_frames, latent_dim] Flow result. The input frame
 // offset identifies the corresponding repeated/padded token window. The
@@ -62,6 +67,11 @@ struct render_options {
     // 50 steps and cfg=1.5.
     std::size_t euler_steps = 0;
     float guidance_scale = 0.0F;
+    // Window is one-based. A zero-step event is emitted when the window starts,
+    // followed by one event after each completed Euler update.
+    std::function<void(std::size_t window, std::size_t total_windows,
+                       std::size_t completed_steps, std::size_t total_steps)> progress;
+    cancellation_callback cancelled;
 };
 
 struct render_input {

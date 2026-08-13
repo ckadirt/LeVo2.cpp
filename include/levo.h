@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <functional>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -16,6 +17,13 @@ enum class backend_kind {
     cuda,
     gpu,
 };
+
+class operation_cancelled : public std::runtime_error {
+public:
+    operation_cancelled() : std::runtime_error("LeVo operation cancelled") {}
+};
+
+using cancellation_callback = std::function<bool()>;
 
 struct backend_info {
     std::string name;
@@ -66,6 +74,19 @@ struct generation_config {
     float cfg_scale = 1.5F;
     generation_sampling_config sampling;
 
+    // Polled at safe boundaries. Returning true aborts with
+    // operation_cancelled without writing an output artifact.
+    cancellation_callback cancelled;
+
+};
+
+enum class generation_stage {
+    initializing_backend,
+    loading_model,
+    preparing_conditioning,
+    prefilling,
+    generating,
+    complete,
 };
 
 struct generation_progress {
@@ -75,9 +96,21 @@ struct generation_progress {
     std::size_t total_steps = 0;
     std::size_t requested_frames = 0;
     std::array<bool, 3> ended{{false, false, false}};
+    generation_stage stage = generation_stage::initializing_backend;
+    double elapsed_seconds = 0.0;
+    double stage_elapsed_seconds = 0.0;
 };
 
 using generation_progress_callback = std::function<void(const generation_progress &)>;
+
+struct generation_timings {
+    double backend_seconds = 0.0;
+    double model_load_seconds = 0.0;
+    double conditioning_seconds = 0.0;
+    double prefill_seconds = 0.0;
+    double generation_seconds = 0.0;
+    double total_seconds = 0.0;
+};
 
 struct generation_result {
     // Canonical stream-major int32 tensor payload, C-order [mixed, vocal,
@@ -94,6 +127,7 @@ struct generation_result {
     std::string runtime_revision;
     std::string tokenizer_revision;
     std::string tokenizer_sha256;
+    generation_timings timings;
 };
 
 // Loads a v2-medium LeVo GGUF, forms conditional and null CFG prefixes from
@@ -129,10 +163,12 @@ struct render_config {
     // them here keeps the tooling on the production path instead of a parallel
     // reimplementation. Nothing extra is allocated while this is false.
     bool capture_windows = false;
+    cancellation_callback cancelled;
 };
 
 enum class render_stage {
     loading_tokens,
+    initializing_backend,
     loading_flow,
     generating_latents,
     releasing_flow,
@@ -146,12 +182,31 @@ struct render_progress {
     render_stage stage = render_stage::loading_tokens;
     std::size_t completed_windows = 0;
     std::size_t total_windows = 0;
+    // One-based while a Flow/VAE window is active, otherwise zero.
+    std::size_t current_window = 0;
+    std::size_t completed_steps = 0;
+    std::size_t total_steps = 0;
+    double elapsed_seconds = 0.0;
+    double stage_elapsed_seconds = 0.0;
 };
 
 using render_progress_callback = std::function<void(const render_progress &)>;
 
+struct render_timings {
+    double token_load_seconds = 0.0;
+    double backend_seconds = 0.0;
+    double flow_load_seconds = 0.0;
+    double flow_seconds = 0.0;
+    double flow_release_seconds = 0.0;
+    double vae_load_seconds = 0.0;
+    double vae_seconds = 0.0;
+    double assembly_seconds = 0.0;
+    double total_seconds = 0.0;
+};
+
 struct render_provenance {
     std::string backend_name;
+    std::string token_tensor_sha256;
     std::string flow_model_name;
     std::string flow_levo_revision;
     std::string flow_model_sha256;
@@ -183,7 +238,10 @@ struct render_result {
     std::size_t source_frames = 0;
     std::size_t rendered_windows = 0;
     uint32_t sample_rate = 48000;
+    std::size_t euler_steps = 0;
+    float cfg_scale = 0.0F;
     render_provenance provenance;
+    render_timings timings;
     std::vector<render_window_capture> windows;
 };
 

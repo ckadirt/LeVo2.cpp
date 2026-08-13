@@ -63,12 +63,14 @@ int main() {
         const model_hparams hparams = tiny_hparams();
         const generation_config config = test_config();
         std::vector<std::array<int32_t, 3>> inputs;
+        std::vector<generation_progress> progress_events;
         const generation_result normal = run_generation_controller(
             hparams, config, logits_for(1, 2, 2),
             [&inputs](const std::array<int32_t, 3> & input) {
                 inputs.push_back(input);
                 return logits_for(1, 2, 2);
-            });
+            },
+            [&progress_events](const generation_progress & value) { progress_events.push_back(value); });
         expect(normal.requested_frames == 2 && normal.frame_count == 2,
                "controller did not retain the requested two frames");
         expect(normal.sequence_steps == 4, "controller sequence length is not initial + delayed positions");
@@ -79,6 +81,28 @@ int main() {
                "invalid delayed detail positions were not forced to special before decode");
         expect(inputs[1] == std::array<int32_t, 3>{{1, 2, 2}},
                "first fully valid delayed position was not decoded");
+        expect(progress_events.size() == 4 && progress_events.front().completed_steps == 0 &&
+                   progress_events.back().completed_steps == progress_events.back().total_steps,
+               "generation progress did not cover the complete monotonic step range");
+        for (std::size_t index = 1; index < progress_events.size(); ++index) {
+            expect(progress_events[index].stage == generation_stage::generating &&
+                       progress_events[index].completed_steps == progress_events[index - 1].completed_steps + 1,
+                   "generation progress steps are not monotonic");
+        }
+
+        generation_config cancellable = config;
+        std::size_t cancel_polls = 0;
+        cancellable.cancelled = [&cancel_polls] { return cancel_polls++ != 0; };
+        bool was_cancelled = false;
+        try {
+            (void) run_generation_controller(
+                hparams, cancellable, logits_for(1, 2, 2),
+                [](const std::array<int32_t, 3> &) { return logits_for(1, 2, 2); });
+        } catch (const operation_cancelled &) {
+            was_cancelled = true;
+        }
+        expect(was_cancelled && cancel_polls == 2,
+               "generation cancellation was not observed at a delayed-step boundary");
 
         // An EOS drawn at a valid mixed position is retained through revert
         // and then removed, together with every frame after the earliest EOS.

@@ -11,6 +11,7 @@
 #include "ggml-backend.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstddef>
 #include <limits>
@@ -109,10 +110,56 @@ void require_finite(const std::vector<float> & values, const char * label) {
     for (float value : values) if (!std::isfinite(value)) fail(std::string(label) + " contains a non-finite value");
 }
 
-void report(const render_progress_callback & callback, render_stage stage,
-            std::size_t completed = 0, std::size_t total = 0) {
-    if (callback) callback({stage, completed, total});
+using progress_clock = std::chrono::steady_clock;
+
+double elapsed_seconds(progress_clock::time_point begin, progress_clock::time_point end = progress_clock::now()) {
+    return std::chrono::duration<double>(end - begin).count();
 }
+
+class render_reporter final {
+public:
+    render_reporter(render_progress_callback callback, cancellation_callback cancelled)
+        : callback_(std::move(callback)), cancelled_(std::move(cancelled)),
+          started_(progress_clock::now()), stage_started_(started_) {}
+
+    void enter(render_stage stage, std::size_t completed_windows = 0,
+               std::size_t total_windows = 0, std::size_t current_window = 0,
+               std::size_t completed_steps = 0, std::size_t total_steps = 0) {
+        stage_ = stage;
+        stage_started_ = progress_clock::now();
+        update(completed_windows, total_windows, current_window, completed_steps, total_steps);
+    }
+
+    void update(std::size_t completed_windows = 0, std::size_t total_windows = 0,
+                std::size_t current_window = 0, std::size_t completed_steps = 0,
+                std::size_t total_steps = 0) const {
+        const auto now = progress_clock::now();
+        render_progress value;
+        value.stage = stage_;
+        value.completed_windows = completed_windows;
+        value.total_windows = total_windows;
+        value.current_window = current_window;
+        value.completed_steps = completed_steps;
+        value.total_steps = total_steps;
+        value.elapsed_seconds = elapsed_seconds(started_, now);
+        value.stage_elapsed_seconds = elapsed_seconds(stage_started_, now);
+        if (callback_) callback_(value);
+        check_cancelled();
+    }
+
+    void check_cancelled() const {
+        if (cancelled_ && cancelled_()) throw operation_cancelled();
+    }
+
+    double elapsed() const { return elapsed_seconds(started_); }
+
+private:
+    render_progress_callback callback_;
+    cancellation_callback cancelled_;
+    progress_clock::time_point started_;
+    progress_clock::time_point stage_started_;
+    render_stage stage_ = render_stage::loading_tokens;
+};
 
 std::vector<std::vector<int32_t>> stream_major(const token_io::artifact & tokens) {
     if (tokens.frame_count == 0 || tokens.tokens.size() != 3U * tokens.frame_count) {
@@ -159,7 +206,11 @@ render_result render_tokens_to_audio(const render_config & config,
     }
     if (config.tokens_path.extension() != ".npy") fail("tokens path must use the .npy extension");
     if (!std::isfinite(config.cfg_scale) || config.cfg_scale < 0.0F) fail("CFG scale must be finite and non-negative");
-    report(progress, render_stage::loading_tokens);
+    render_reporter reporter(std::move(progress), config.cancelled);
+    render_timings timings;
+
+    reporter.enter(render_stage::loading_tokens);
+    const auto token_started = progress_clock::now();
     const token_io::artifact artifact = token_io::read(config.tokens_path);
     const renderer_token_streams streams = validate_renderer_tokens(stream_major(artifact));
     const renderer_schedule schedule = make_renderer_schedule(streams.frames());
@@ -169,7 +220,10 @@ render_result render_tokens_to_audio(const render_config & config,
         ? native_gaussian_noise(expected_noise, config.seed) : config.external_noise;
     if (noise.size() != expected_noise) fail("external noise must have shape [window_count, 1000, 64]");
     require_finite(noise, "external noise");
+    timings.token_load_seconds = elapsed_seconds(token_started);
 
+    reporter.enter(render_stage::initializing_backend, 0, schedule.windows.size());
+    const auto backend_started = progress_clock::now();
     ggml_backend_dev_t device = select_device(config.backend, config.device_index);
     // Must precede backend initialization: this is the difference between a
     // true F32 renderer and a TF32 one on Ampere and later.
@@ -177,13 +231,19 @@ render_result render_tokens_to_audio(const render_config & config,
     detail::configure_cuda_disable_tf32(device);
     backend_ptr backend(ggml_backend_dev_init(device, nullptr));
     if (!backend) fail("cannot initialize selected GGML backend");
+    timings.backend_seconds = elapsed_seconds(backend_started);
 
     flow::render_output latents;
     render_provenance provenance;
     provenance.backend_name = ggml_backend_name(backend.get());
+    provenance.token_tensor_sha256 = token_io::tensor_sha256(artifact.tokens);
     provenance.seed = config.seed;
     provenance.external_noise = !config.external_noise.empty();
-    report(progress, render_stage::loading_flow, 0, schedule.windows.size());
+    std::size_t resolved_steps = config.euler_steps;
+    float resolved_cfg = config.cfg_scale;
+    reporter.enter(render_stage::loading_flow, 0, schedule.windows.size());
+    const auto flow_load_started = progress_clock::now();
+    progress_clock::time_point flow_release_started;
     {
         const std::shared_ptr<flow::model> model = flow::model::load_gguf(
             config.flow_model_path.string(), {backend.get(), true, true, false});
@@ -192,6 +252,8 @@ render_result render_tokens_to_audio(const render_config & config,
         provenance.flow_levo_revision = source.levo_revision;
         provenance.flow_model_sha256 = source.model_sha256;
         provenance.flow_runtime_revision = source.runtime_revision;
+        resolved_steps = resolved_steps == 0 ? static_cast<std::size_t>(model->hparams().euler_steps_default) : resolved_steps;
+        resolved_cfg = resolved_cfg == 0.0F ? model->hparams().cfg_default : resolved_cfg;
         flow::renderer flow_renderer(model);
         flow::render_input flow_input;
         flow_input.vocal_codes = streams.vocal;
@@ -200,15 +262,27 @@ render_result render_tokens_to_audio(const render_config & config,
         flow::render_options options;
         options.euler_steps = config.euler_steps;
         options.guidance_scale = config.cfg_scale;
-        report(progress, render_stage::generating_latents, 0, schedule.windows.size());
+        options.cancelled = config.cancelled;
+        options.progress = [&reporter](std::size_t window, std::size_t windows,
+                                       std::size_t completed_steps, std::size_t total_steps) {
+            const std::size_t completed_windows = completed_steps == total_steps ? window : window - 1U;
+            reporter.update(completed_windows, windows, window, completed_steps, total_steps);
+        };
+        timings.flow_load_seconds = elapsed_seconds(flow_load_started);
+        reporter.enter(render_stage::generating_latents, 0, schedule.windows.size());
+        const auto flow_started = progress_clock::now();
         latents = flow_renderer.render(flow_input, options);
+        timings.flow_seconds = elapsed_seconds(flow_started);
+        reporter.enter(render_stage::releasing_flow, schedule.windows.size(), schedule.windows.size());
+        flow_release_started = progress_clock::now();
     }
-    report(progress, render_stage::releasing_flow, schedule.windows.size(), schedule.windows.size());
+    timings.flow_release_seconds = elapsed_seconds(flow_release_started);
     if (latents.windows.size() != schedule.windows.size() || latents.source_frames != streams.frames()) {
         fail("Flow renderer returned an inconsistent window schedule");
     }
 
-    report(progress, render_stage::loading_vae, 0, latents.windows.size());
+    reporter.enter(render_stage::loading_vae, 0, latents.windows.size());
+    const auto vae_load_started = progress_clock::now();
     std::vector<renderer_stereo_audio> decoded_windows;
     decoded_windows.reserve(latents.windows.size());
     {
@@ -226,15 +300,21 @@ render_result render_tokens_to_audio(const render_config & config,
             fail("VAE GGUF does not match the native Flow renderer contract");
         }
         std::unique_ptr<detail::vae_decoder> decoder = detail::vae_decoder::create(model);
+        timings.vae_load_seconds = elapsed_seconds(vae_load_started);
+        reporter.enter(render_stage::decoding_window, 0, latents.windows.size(), 1U);
+        const auto vae_started = progress_clock::now();
         for (std::size_t index = 0; index < latents.windows.size(); ++index) {
+            reporter.check_cancelled();
             const flow::latent_window & window = latents.windows[index];
             const std::vector<float> input = channel_major_latent(window.denormalized_latents,
                 renderer_window_frames, static_cast<std::size_t>(hp.latent_dim));
             decoded_windows.push_back(stereo_from_vae(decoder->decode(input, renderer_window_frames)));
-            report(progress, render_stage::decoding_window, index + 1U, latents.windows.size());
+            reporter.update(index + 1U, latents.windows.size(), index + 1U);
         }
+        timings.vae_seconds = elapsed_seconds(vae_started);
     }
-    report(progress, render_stage::assembling_audio, latents.windows.size(), latents.windows.size());
+    reporter.enter(render_stage::assembling_audio, latents.windows.size(), latents.windows.size());
+    const auto assembly_started = progress_clock::now();
     const renderer_stereo_audio stereo = assemble_renderer_audio(schedule, decoded_windows);
     if (stereo.left.size() != stereo.right.size()) fail("audio assembler returned uneven stereo channels");
     render_result result;
@@ -254,13 +334,18 @@ render_result render_tokens_to_audio(const render_config & config,
     result.source_frames = streams.frames();
     result.rendered_windows = latents.windows.size();
     result.sample_rate = renderer_sample_rate;
+    result.euler_steps = resolved_steps;
+    result.cfg_scale = resolved_cfg;
     result.provenance = std::move(provenance);
     result.interleaved_stereo.reserve(checked_product(result.samples_per_channel, std::size_t(2), "interleaved audio"));
     for (std::size_t sample = 0; sample < result.samples_per_channel; ++sample) {
         result.interleaved_stereo.push_back(stereo.left[sample]);
         result.interleaved_stereo.push_back(stereo.right[sample]);
     }
-    report(progress, render_stage::complete, latents.windows.size(), latents.windows.size());
+    timings.assembly_seconds = elapsed_seconds(assembly_started);
+    timings.total_seconds = reporter.elapsed();
+    result.timings = timings;
+    reporter.enter(render_stage::complete, latents.windows.size(), latents.windows.size());
     return result;
 }
 

@@ -38,6 +38,7 @@ int main() {
     input.initial_noise = {1.0F, 2.0F, 10.0F, 20.0F, 30.0F, 40.0F};
     input.normalized_incontext = {4.0F, 8.0F, 0.0F, 0.0F, 0.0F, 0.0F};
     std::vector<float> times;
+    std::vector<std::size_t> completed_steps;
     const std::vector<float> solved = solve_flow_euler(
         input, 2,
         [&times](const std::vector<float> & state, float time) {
@@ -52,12 +53,35 @@ int main() {
                 assert(close(state[1], 5.10F));
             }
             return std::vector<float>(state.size(), 1.0F);
+        },
+        [&completed_steps](std::size_t completed, std::size_t total) {
+            assert(total == 2);
+            completed_steps.push_back(completed);
         });
     assert(times.size() == 2 && close(times[0], 0.0F) && close(times[1], 0.5F));
+    assert((completed_steps == std::vector<std::size_t>{1, 2}));
     assert(close(solved[0], 4.0F) && close(solved[1], 8.0F));
     assert(close(solved[2], 11.0F) && close(solved[3], 21.0F));
     assert(close(solved[4], 31.0F) && close(solved[5], 41.0F));
     expect_throw([&] { (void) solve_flow_euler(input, 0, [](const auto &, float) { return std::vector<float>{}; }); });
+
+    // Cancellation is checked before every expensive velocity evaluation and
+    // preserves the completed-step boundary already reported to the caller.
+    std::size_t cancel_polls = 0;
+    std::size_t velocity_calls = 0;
+    bool cancelled = false;
+    try {
+        (void) solve_flow_euler(
+            input, 2,
+            [&velocity_calls](const std::vector<float> & state, float) {
+                ++velocity_calls;
+                return std::vector<float>(state.size(), 1.0F);
+            }, {},
+            [&cancel_polls] { return cancel_polls++ != 0; });
+    } catch (const levo::operation_cancelled &) {
+        cancelled = true;
+    }
+    assert(cancelled && velocity_calls == 1 && cancel_polls == 2);
 
     // Two 4-frame windows with a 3-frame hop retain the first full window and
     // discard the one-frame continuation prefix, then crop to source length.
