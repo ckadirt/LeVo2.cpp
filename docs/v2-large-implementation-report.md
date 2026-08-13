@@ -40,7 +40,8 @@ does not rewrite their historical validation.
   immutable `v2-medium` and `v2-large` specifications. The `v2-large`
   specification declares 2048 hidden width, 11008 FFN width, 36 main blocks,
   12 detail blocks, 16 attention/KV heads, and exactly 452 runtime tensors.
-- The production CLI now requires `--variant` (default `v2-medium`) and
+- The production CLI selects a named `--variant` (`v2-medium` is the
+  compatibility default; this release explicitly passes `v2-large`) and
   verifies the selected `model.pt` byte count/SHA-256 and `config.yaml` byte
   count/SHA-256 before conversion. Its hidden unverified mode exists solely
   for the tiny deterministic unit fixture; it is not used for release work.
@@ -105,8 +106,17 @@ does not rewrite their historical validation.
   artifact plus provenance, WAV, and WAV provenance. The validation matrix
   records its exact model identities and audio statistics.
 
-### Publication status
+### 2026-08-13 — Hugging Face publication and anonymous verification
 
-The local catalog and documentation are complete and checksum-verified. Public
-Hugging Face publication and anonymous LFS verification are the remaining
-steps; their immutable revision will be appended here rather than inferred.
+- Published the F16 artifact and sidecars, then the four low-bit artifacts and
+  sidecars, to [`ckadirt/LeVo2-GGUF`](https://huggingface.co/ckadirt/LeVo2-GGUF).
+  The completed catalog/card revision is
+  [`9d7b5746fdc74fdc80f85295e7b6c783be3703da`](https://huggingface.co/ckadirt/LeVo2-GGUF/commit/9d7b5746fdc74fdc80f85295e7b6c783be3703da).
+- Queried the public repository without credentials and verified every LFS
+  object's exact byte count and SHA-256 against the local strict manifests.
+  Downloaded all ten small checksum/manifest sidecars with `token=False` and
+  compared them byte-for-byte to the local files: all passed.
+- Published the matching model card, artifact naming document, and
+  [`V2-LARGE-VALIDATION-MATRIX.json`](https://huggingface.co/ckadirt/LeVo2-GGUF/blob/9d7b5746fdc74fdc80f85295e7b6c783be3703da/V2-LARGE-VALIDATION-MATRIX.json)
+  in that final Hub revision. The public catalog, source documentation, and
+  local generated-song provenance now carry the same five artifact identities.
