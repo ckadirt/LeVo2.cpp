@@ -44,6 +44,10 @@ pass with the parity-safe CUDA compute mode described below.
   `lglg666/SongGeneration-Runtime@cc258cc694a63114c61684cc26d0583b8ad777d0`
 - GGML: `ggml-org/ggml@8846b79e66747bb9f68597420e95114c177315ce`
 
+The subsequent v2-large LeLM extension has an independent strict source
+contract and live evidence record in
+[`v2-large-implementation-report.md`](v2-large-implementation-report.md).
+
 ## Milestone log
 
 ### Documentation baseline

@@ -7,6 +7,11 @@ milestone. It supplements the immutable historical sections in
 `implementation_report.md`; that report links here rather than being rewritten
 as implementation proceeds.
 
+The independently versioned v2-large LeLM catalog is tracked in
+[`v2-large-implementation-report.md`](v2-large-implementation-report.md).
+It shares this quantization policy but has its own source identities and CUDA
+validation evidence.
+
 Every accepted slice follows the same order:
 
 1. document the intended contract and any new evidence;
