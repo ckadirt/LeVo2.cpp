@@ -1,0 +1,148 @@
+{
+  "format": "levo2-renderer-release-matrix-v1",
+  "milestone": "v0.2.0",
+  "environment": {
+    "gpu": "NVIDIA GeForce RTX 4090",
+    "compute_capability": "8.9",
+    "driver": "595.84",
+    "cuda_toolkit": "13.2",
+    "torch": "2.6.0+cu124",
+    "ggml_revision": "8846b79e66747bb9f68597420e95114c177315ce"
+  },
+  "artifacts": {
+    "flow_sha256": "a8cf50dbecef243501b9b345109b1d2f283b3e22f4e4856715197e4b22129d10",
+    "vae_sha256": "26f9ea955f586ed3d7668fe345a851ba222b8db95b406e3eea3c9565f4a0b515"
+  },
+  "thresholds": {
+    "latent_max_abs": 0.02,
+    "latent_rel_rms": 0.005,
+    "audio_max_abs": 0.003,
+    "audio_rel_rms": 0.001
+  },
+  "cases": [
+    {
+      "frames": 50,
+      "windows": 1,
+      "steps": 1,
+      "latent_max_abs": 0.000048160553,
+      "latent_rel_rms": 0.000004572469,
+      "audio_max_abs": 0.000177033246,
+      "audio_rel_rms": 0.000030499076,
+      "oracle_seconds": 16.399,
+      "native_seconds": 3.780,
+      "oracle_peak_gpu_mib": 16742,
+      "native_peak_gpu_mib": 10140
+    },
+    {
+      "frames": 50,
+      "windows": 1,
+      "steps": 50,
+      "latent_max_abs": 0.001104593280,
+      "latent_rel_rms": 0.000024726523,
+      "audio_max_abs": 0.000310509466,
+      "audio_rel_rms": 0.000045884280,
+      "oracle_seconds": 21.715,
+      "native_seconds": 10.053,
+      "oracle_peak_gpu_mib": 16742,
+      "native_peak_gpu_mib": 10140
+    },
+    {
+      "frames": 252,
+      "windows": 1,
+      "steps": 1,
+      "latent_max_abs": 0.000024318695,
+      "latent_rel_rms": 0.000003283243,
+      "audio_max_abs": 0.000002698973,
+      "audio_rel_rms": 0.000025690301,
+      "oracle_seconds": 16.390,
+      "native_seconds": 3.659,
+      "oracle_peak_gpu_mib": 16742,
+      "native_peak_gpu_mib": 10140
+    },
+    {
+      "frames": 252,
+      "windows": 1,
+      "steps": 50,
+      "latent_max_abs": 0.000841438770,
+      "latent_rel_rms": 0.000006397120,
+      "audio_max_abs": 0.000049164519,
+      "audio_rel_rms": 0.000020835239,
+      "oracle_seconds": 21.700,
+      "native_seconds": 10.066,
+      "oracle_peak_gpu_mib": 16742,
+      "native_peak_gpu_mib": 10140
+    },
+    {
+      "frames": 750,
+      "windows": 1,
+      "steps": 1,
+      "latent_max_abs": 0.000050544739,
+      "latent_rel_rms": 0.000004686625,
+      "audio_max_abs": 0.000433400273,
+      "audio_rel_rms": 0.000023293820,
+      "oracle_seconds": 16.447,
+      "native_seconds": 3.661,
+      "oracle_peak_gpu_mib": 16742,
+      "native_peak_gpu_mib": 10140
+    },
+    {
+      "frames": 750,
+      "windows": 1,
+      "steps": 50,
+      "latent_max_abs": 0.000617621467,
+      "latent_rel_rms": 0.000012971043,
+      "audio_max_abs": 0.000482976437,
+      "audio_rel_rms": 0.000026895470,
+      "oracle_seconds": 21.698,
+      "native_seconds": 10.056,
+      "oracle_peak_gpu_mib": 16742,
+      "native_peak_gpu_mib": 10140
+    },
+    {
+      "frames": 1250,
+      "windows": 2,
+      "steps": 1,
+      "latent_max_abs": 0.000203967094,
+      "latent_rel_rms": 0.000007667019,
+      "audio_max_abs": 0.000433633104,
+      "audio_rel_rms": 0.000031880650,
+      "oracle_seconds": 16.952,
+      "native_seconds": 6.542,
+      "oracle_peak_gpu_mib": 17682,
+      "native_peak_gpu_mib": 10140
+    },
+    {
+      "frames": 1250,
+      "windows": 2,
+      "steps": 50,
+      "latent_max_abs": 0.002012968060,
+      "latent_rel_rms": 0.000032824116,
+      "audio_max_abs": 0.002717942000,
+      "audio_rel_rms": 0.000076757856,
+      "oracle_seconds": 27.632,
+      "native_seconds": 19.476,
+      "oracle_peak_gpu_mib": 17682,
+      "native_peak_gpu_mib": 10140
+    }
+  ],
+  "production_smoke": {
+    "lyrics": "[verse] Hello world.",
+    "description": "female, pop",
+    "generation_seed": 1235,
+    "generation_seconds": 47.401,
+    "generation_peak_gpu_mib": 10514,
+    "tokens_npy_sha256": "d76ee215ebda87c35f0040cf6c9890b8b3517a67e5bdb6f8cd76b503d6bbc5a8",
+    "render_seed": 1234,
+    "render_seconds": 10.177,
+    "render_peak_gpu_mib": 10140,
+    "wav_sha256": "b6b7a3d60ce01b3a2644c4ef9adf2b0306021ec2d22b0cdf1719b25a948a83ed",
+    "wav_bytes": 11520044,
+    "sample_rate": 48000,
+    "samples_per_channel": 1440000,
+    "channels": 2,
+    "subtype": "FLOAT",
+    "finite": true,
+    "peak": 1.8526769876480103,
+    "rms": 0.3903185711883406
+  }
+}

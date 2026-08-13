@@ -177,3 +177,31 @@ pushed before the next long-running step.
   Pinning `setuptools<81` restored that upstream compatibility; the unchanged
   CUDA F32 VAE stage gate then passed 2/2. No numerical threshold or model code
   changed.
+
+### Final release matrix
+
+All four required inputs pass at both one and fifty Euler steps. Values below
+are the worst boundary value for each run across normalized/denormalized
+latents, decoded windows, and assembled channel audio. The machine-readable
+record is `docs/renderer-release-matrix.json`.
+
+| Frames | Windows | Steps | Latent max | Latent rel. RMS | Audio max | Audio rel. RMS | Oracle / native seconds | Oracle / native peak MiB |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 50 | 1 | 1 | `4.816e-5` | `4.572e-6` | `1.770e-4` | `3.050e-5` | 16.399 / 3.780 | 16,742 / 10,140 |
+| 50 | 1 | 50 | `1.105e-3` | `2.473e-5` | `3.105e-4` | `4.588e-5` | 21.715 / 10.053 | 16,742 / 10,140 |
+| 252 | 1 | 1 | `2.432e-5` | `3.283e-6` | `2.699e-6` | `2.569e-5` | 16.390 / 3.659 | 16,742 / 10,140 |
+| 252 | 1 | 50 | `8.414e-4` | `6.397e-6` | `4.916e-5` | `2.084e-5` | 21.700 / 10.066 | 16,742 / 10,140 |
+| 750 | 1 | 1 | `5.054e-5` | `4.687e-6` | `4.334e-4` | `2.329e-5` | 16.447 / 3.661 | 16,742 / 10,140 |
+| 750 | 1 | 50 | `6.176e-4` | `1.297e-5` | `4.830e-4` | `2.690e-5` | 21.698 / 10.056 | 16,742 / 10,140 |
+| 1,250 | 2 | 1 | `2.040e-4` | `7.667e-6` | `4.336e-4` | `3.188e-5` | 16.952 / 6.542 | 17,682 / 10,140 |
+| 1,250 | 2 | 50 | `2.013e-3` | `3.282e-5` | `2.718e-3` | `7.676e-5` | 27.632 / 19.476 | 17,682 / 10,140 |
+
+The frozen latent limits are `2e-2` maximum and `5e-3` relative RMS; waveform
+limits are `3e-3` maximum and `1e-3` relative RMS. No threshold changed.
+
+The public two-command production smoke regenerated the sampled `[3,750]`
+artifact in 47.401 s with 10,514 MiB peak GPU memory, then rendered it with the
+native seed 1234 in 10.177 s with 10,140 MiB peak GPU memory. The resulting
+IEEE-F32 WAV is stereo 48 kHz with 1,440,000 samples per channel, finite,
+non-silent (RMS `0.390319`, absolute peak `1.852677`), 11,520,044 bytes, and
+SHA-256 `b6b7a3d60ce01b3a2644c4ef9adf2b0306021ec2d22b0cdf1719b25a948a83ed`.
