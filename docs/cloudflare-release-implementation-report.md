@@ -47,3 +47,20 @@ Cantor relay and deploys the Worker.
   present in this workspace or the available Cantor/ACE repositories. A local,
   compatible implementation was added instead, including the required
   botocore `request_checksum_calculation="when_required"` workaround for R2.
+
+### 2026-08-13 — engine release automation
+
+- Added `.github/workflows/engine-release.yml`. It builds Linux x86_64 CPU,
+  CUDA 12, and Vulkan cells with dynamic GGML backends and every CPU dispatch
+  variant, then publishes immutable commit-addressed R2 tarballs only after
+  packaging gates pass.
+- The archive deliberately contains only a single engine root with
+  `libcantor_engine.so`, GGML base/runtime libraries, all CPU plugins, and the
+  selected GPU plugin. Its real shared objects are patched to `$ORIGIN` and an
+  extracted archive is loaded through `ctypes` with `LD_LIBRARY_PATH` removed.
+- The workflow emits, but does not deploy, a hash-bearing
+  `levo2-backends-v1.fragment.json` artifact. This is the sole backend-manifest
+  handoff for the maintainer to append manually.
+- Locally built the portable CPU engine configuration (14 CPU plugins) and
+  proved that the extracted tarball reports Cantor ABI `1` and engine `levo2`
+  with no `LD_LIBRARY_PATH`.

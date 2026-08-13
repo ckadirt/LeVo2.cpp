@@ -1,0 +1,277 @@
+# Build the Cantor ABI engine and publish immutable backend archives to R2.
+#
+# Every archive includes all CPU variants: Cantor initializes a CPU fallback
+# even when it selects CUDA or Vulkan, so a GPU-only archive cannot load.
+# Artifacts are addressed by source commit and are never overwritten.
+name: engine-release
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'include/**'
+      - 'ggml/**'
+      - 'CMakeLists.txt'
+      - '.github/workflows/engine-release.yml'
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Upload immutable engine archives to R2
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: engine-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: linux-${{ matrix.arch }}-${{ matrix.backend }}
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - backend: cpu
+            arch: x86_64
+            cmake_backend: ''
+          - backend: cuda12
+            arch: x86_64
+            cmake_backend: cuda
+          - backend: vulkan
+            arch: x86_64
+            cmake_backend: vulkan
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install build and packaging tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends \
+            build-essential ccache glslc libvulkan-dev ninja-build patchelf pkg-config
+
+      - name: Install CUDA 12 toolkit
+        if: matrix.cmake_backend == 'cuda'
+        uses: Jimver/cuda-toolkit@v0.2.30
+        with:
+          cuda: 12.8.0
+          method: network
+
+      - name: Restore compiler cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ccache
+          key: levo2-engine-${{ matrix.backend }}-${{ github.sha }}
+          restore-keys: levo2-engine-${{ matrix.backend }}-
+
+      - name: Configure portable backend build
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake_args=(
+            -S . -B build -G Ninja
+            -DCMAKE_BUILD_TYPE=Release
+            -DLEVO_BUILD_TESTS=OFF
+            -DLEVO_BUILD_PARITY_TOOLS=OFF
+            -DBUILD_SHARED_LIBS=ON
+            -DGGML_BACKEND_DL=ON
+            -DGGML_CPU_ALL_VARIANTS=ON
+            -DGGML_NATIVE=OFF
+            -DGGML_OPENMP=OFF
+          )
+          case '${{ matrix.cmake_backend }}' in
+            cuda)
+              export PATH="${CUDA_PATH:-/usr/local/cuda}/bin:${PATH}"
+              cmake_args+=(
+                -DGGML_CUDA=ON
+                '-DCMAKE_CUDA_ARCHITECTURES=75-virtual;80-virtual;86-virtual;89-real;90-real'
+              )
+              ;;
+            vulkan)
+              cmake_args+=(-DGGML_VULKAN=ON)
+              ;;
+            '')
+              ;;
+            *)
+              echo "unknown backend: ${{ matrix.cmake_backend }}" >&2
+              exit 1
+              ;;
+          esac
+          cmake "${cmake_args[@]}" 2>&1 | tee configure.log
+
+      - name: Assert portable CPU dispatch
+        shell: bash
+        run: |
+          set -euo pipefail
+          variants="$(grep -c 'Adding CPU backend variant' configure.log || true)"
+          test "$variants" -ge 2
+          # A bare libggml-cpu indicates the generic fallback. The x64 variant
+          # intentionally has no -march flags but retains the x64 suffix.
+          if grep -q 'Adding CPU backend variant ggml-cpu:' configure.log; then
+            echo 'refusing to package the bare generic CPU backend' >&2
+            exit 1
+          fi
+
+      - name: Build engine
+        run: cmake --build build --parallel "$(nproc)"
+
+      - name: Assert ABI surface
+        shell: bash
+        run: |
+          set -euo pipefail
+          engine=build/lib/liblevo-cantor-engine.so
+          test -f "$engine"
+          test "$(nm -D --defined-only "$engine" | awk '{print $3}' | grep -c '^cantor_engine_' || true)" -eq 13
+
+      - name: Package relocatable Cantor engine
+        id: package
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          name="levo2-engine-${{ matrix.backend }}-${{ matrix.arch }}"
+          stage="dist/${name}"
+          mkdir -p "$stage"
+
+          install -m 0755 build/lib/liblevo-cantor-engine.so "$stage/libcantor_engine.so"
+          cp -a build/ggml/src/libggml.so* build/ggml/src/libggml-base.so* "$stage/"
+          cpu_libs=(build/bin/libggml-cpu*.so*)
+          test "${#cpu_libs[@]}" -ge 2
+          cp -a "${cpu_libs[@]}" "$stage/"
+          case '${{ matrix.backend }}' in
+            cuda12)
+              gpu_libs=(build/bin/libggml-cuda.so*)
+              test "${#gpu_libs[@]}" -ge 1
+              cp -a "${gpu_libs[@]}" "$stage/"
+              ;;
+            vulkan)
+              gpu_libs=(build/bin/libggml-vulkan.so*)
+              test "${#gpu_libs[@]}" -ge 1
+              cp -a "${gpu_libs[@]}" "$stage/"
+              ;;
+          esac
+          while IFS= read -r -d '' library; do
+            patchelf --set-rpath '$ORIGIN' "$library"
+          done < <(find "$stage" -type f -name '*.so*' -print0)
+          if readelf -d "$stage/libcantor_engine.so" | grep -F -- "$GITHUB_WORKSPACE"; then
+            echo 'engine retains a build-tree runtime path' >&2
+            exit 1
+          fi
+
+          archive="${name}.tar.gz"
+          tar -C dist -czpf "$archive" "$name"
+          sha256="$(sha256sum "$archive" | awk '{print $1}')"
+          bytes="$(stat -c%s "$archive")"
+          printf '%s\n' "archive=$archive" "name=$name" "sha256=$sha256" "bytes=$bytes" >> "$GITHUB_OUTPUT"
+
+      - name: Prove extracted archive loads without LD_LIBRARY_PATH
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir extracted
+          tar -xzpf '${{ steps.package.outputs.archive }}' -C extracted
+          env -u LD_LIBRARY_PATH python3 - "extracted/${{ steps.package.outputs.name }}/libcantor_engine.so" <<'PY'
+          import ctypes
+          import sys
+
+          engine = ctypes.CDLL(sys.argv[1])
+          engine.cantor_engine_abi_version.restype = ctypes.c_int
+          engine.cantor_engine_model.restype = ctypes.c_char_p
+          assert engine.cantor_engine_abi_version() == 1
+          assert engine.cantor_engine_model() == b"levo2"
+          PY
+
+      - name: Write Cantor backend fragment
+        shell: bash
+        run: |
+          python3 - '${{ matrix.backend }}' '${{ matrix.arch }}' '${{ steps.package.outputs.name }}' '${{ steps.package.outputs.sha256 }}' '${{ steps.package.outputs.bytes }}' "$GITHUB_SHA" <<'PY' > '${{ steps.package.outputs.name }}.json'
+          import json
+          import sys
+
+          backend, arch, name, sha256, byte_count, commit = sys.argv[1:]
+          print(json.dumps({
+              "backend": backend,
+              "arch": arch,
+              "url": f"https://cantor-ckpts.ckadirt.xyz/backends/{commit[:12]}/{name}.tar.gz",
+              "sha256": sha256,
+              "bytes": int(byte_count),
+          }, indent=2))
+          PY
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.package.outputs.name }}
+          path: |
+            ${{ steps.package.outputs.archive }}
+            ${{ steps.package.outputs.name }}.json
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Publish immutable R2 engine archive
+        if: github.event_name == 'push' || inputs.publish
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+          AWS_REQUEST_CHECKSUM_CALCULATION: when_required
+          AWS_RESPONSE_CHECKSUM_VALIDATION: when_required
+          ENDPOINT: ${{ secrets.R2_ENDPOINT_URL }}
+          BUCKET: ${{ secrets.R2_BUCKET }}
+          ARCHIVE: ${{ steps.package.outputs.archive }}
+          SHA256: ${{ steps.package.outputs.sha256 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          key="backends/${GITHUB_SHA::12}/${ARCHIVE}"
+          if aws s3api head-object --endpoint-url "$ENDPOINT" --bucket "$BUCKET" --key "$key" >/dev/null 2>&1; then
+            echo "refusing to overwrite immutable R2 engine archive: $key" >&2
+            exit 1
+          fi
+          aws s3 cp "$ARCHIVE" "s3://$BUCKET/$key" \
+            --endpoint-url "$ENDPOINT" \
+            --cache-control 'public, max-age=31536000, immutable' \
+            --content-type application/gzip \
+            --metadata "sha256=$SHA256"
+
+  backend-fragment:
+    needs: build
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: levo2-engine-*
+          merge-multiple: true
+          path: fragments
+
+      - name: Assemble paste-ready Cantor fragment
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          fragments = sorted(Path("fragments").glob("*.json"))
+          if len(fragments) != 3:
+              raise SystemExit(f"expected three backend fragments, found {len(fragments)}")
+          backends = [json.loads(path.read_text(encoding="utf-8")) for path in fragments]
+          output = {"name": "levo2", "abi": 1, "backends": backends}
+          Path("levo2-backends-v1.fragment.json").write_text(
+              json.dumps(output, indent=2) + "\n", encoding="utf-8"
+          )
+          PY
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: levo2-backends-v1-fragment
+          path: levo2-backends-v1.fragment.json
+          if-no-files-found: error
+          retention-days: 14
