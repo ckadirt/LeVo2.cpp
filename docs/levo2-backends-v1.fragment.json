@@ -1,0 +1,27 @@
+{
+  "name": "levo2",
+  "abi": 1,
+  "backends": [
+    {
+      "backend": "cpu",
+      "arch": "x86_64",
+      "url": "https://cantor-ckpts.ckadirt.xyz/backends/b406beb25d12/levo2-engine-cpu-x86_64.tar.gz",
+      "sha256": "868c6429a4d232139149a038f6ddfb834aadf4b8ffd4152d7f45e6b8ed06afba",
+      "bytes": 6356609
+    },
+    {
+      "backend": "cuda12",
+      "arch": "x86_64",
+      "url": "https://cantor-ckpts.ckadirt.xyz/backends/b406beb25d12/levo2-engine-cuda12-x86_64.tar.gz",
+      "sha256": "REPLACE_WITH_CUDA12_TARBALL_SHA256",
+      "bytes": 0
+    },
+    {
+      "backend": "vulkan",
+      "arch": "x86_64",
+      "url": "https://cantor-ckpts.ckadirt.xyz/backends/b406beb25d12/levo2-engine-vulkan-x86_64.tar.gz",
+      "sha256": "1d6e5fae44873421e6f4c15270e1826184738eda68b42a357bee148790b9e192",
+      "bytes": 22315403
+    }
+  ]
+}

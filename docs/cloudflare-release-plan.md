@@ -57,7 +57,11 @@ user has selected a model tag.
 
 ## Immutable R2 objects
 
-Model blobs use `levo2-1.0/<filename>.gguf`. The uploader must:
+Model blobs use `levo2-1.0/<filename>.gguf`. `levo2` identifies the engine
+family and `1.0` is the immutable catalog-release namespace, deliberately
+shared by the `1.0-fast`, `1.0-balanced`, and `1.0-quality` tags. A future
+incompatible release uses a new prefix (for example `levo2-1.1/`) instead of
+replacing any object a node may already have recorded. The uploader must:
 
 1. Download one pinned file at a time from
    `ckadirt/LeVo2-GGUF@9d7b5746fdc74fdc80f85295e7b6c783be3703da`.
@@ -91,9 +95,13 @@ current build-tree RUNPATH to `$ORIGIN`, and proves an extracted engine can be
 `dlopen`ed without `LD_LIBRARY_PATH`.
 
 It emits a complete, hash-bearing `levo2-backends-v1.fragment.json` GitHub
-Actions artifact. That fragment is committed as release evidence and is ready
-to paste manually into Cantor's `relay/public/backends/v1.json`; this project
-does not edit or deploy that relay file.
+Actions artifact. The committed
+[`levo2-backends-v1.fragment.json`](levo2-backends-v1.fragment.json) carries
+the published CPU/Vulkan values and a conspicuous CUDA placeholder while that
+slow build finishes. Replace that placeholder with the artifact's bare hash
+and byte count before manually pasting it into Cantor's
+`relay/public/backends/v1.json`; this project does not edit or deploy that
+relay file.
 
 ## Relay handoff
 

@@ -72,3 +72,17 @@ Cantor relay and deploys the Worker.
 - Locally built the portable CPU engine configuration (14 CPU plugins) and
   proved that the extracted tarball reports Cantor ABI `1` and engine `levo2`
   with no `LD_LIBRARY_PATH`.
+
+### 2026-08-13 — manual backend-fragment handoff
+
+- Published engine archives from source commit `b406beb25d12`: CPU
+  (`6,356,609` bytes,
+  `868c6429a4d232139149a038f6ddfb834aadf4b8ffd4152d7f45e6b8ed06afba`)
+  and Vulkan (`22,315,403` bytes,
+  `1d6e5fae44873421e6f4c15270e1826184738eda68b42a357bee148790b9e192`).
+  Both have immutable cache policy and public byte-range support.
+- Added `docs/levo2-backends-v1.fragment.json` for the maintainer's manual
+  Cantor handoff. CUDA 12 intentionally remains a non-schema-valid,
+  conspicuous placeholder (`sha256` replacement text and byte count `0`) until
+  its lengthy CI build finishes; it must be filled with that artifact's bare
+  SHA-256 and byte size before relay validation/deployment.
