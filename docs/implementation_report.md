@@ -208,3 +208,17 @@ VAE artifacts are pinned by the model-repository tag `v0.2.0` and immutable
 Hugging Face revision `04b6819a185fb33fc5e35669688694d820bacb26`; their
 anonymous download, hash, strict-loader, and execution checks are recorded in
 the renderer report.
+
+## Post-v0.2 observability milestone
+
+The released v0.2 callbacks identify token-generation steps and broad renderer
+stages, but they do not expose Flow Euler progress, elapsed time, ETA,
+cancellation, structured logs, or durable WAV provenance. This became material
+during a real 20-second CPU run: LeLM generation took 4m36s and the 50-step
+single-window Flow/VAE render took 15m10s, with approximately 14.5 minutes of
+silence inside the Flow stage.
+
+The approved remediation contract is frozen in
+`docs/observability-plan.md`. Implementation begins from clean pushed source
+commit `49b053b0c676630142434ac2d43f511d60d9825a`; generated songs and model
+artifacts remain ignored.
