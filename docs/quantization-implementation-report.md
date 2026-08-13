@@ -88,6 +88,20 @@ loudly rather than silently changing a waveform.
 
 ## Milestone log
 
+### 2026-08-13 — 10.08-second CPU/CUDA performance matrix initiated
+
+- Began a separate, reproducible benchmark of LeLM, Flow, and VAE precision
+  variants using the frozen 10.08-second/252-frame fixture. The renderer runs
+  one Euler step so the full CPU/CUDA/profile matrix can execute while still
+  using the complete native Flow and VAE graphs; it is not a 50-step latency
+  claim.
+- CPU processes are hard-pinned to both SMT siblings of eight physical cores
+  (`0-7,16-23`), exactly half of this 16-core host. The report will retain
+  process wall time/RSS and renderer component timings, along with all model
+  identities and limitations.
+- Results and exact commands are recorded in
+  [`quantization-benchmark-report.md`](quantization-benchmark-report.md).
+
 ### 2026-08-13 — contract and shared policy scaffold
 
 - Added the versioned native policy definition in `src/levo-quantization.h`.
