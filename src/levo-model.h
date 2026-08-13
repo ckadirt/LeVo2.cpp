@@ -132,7 +132,9 @@ struct tensor_data {
 
 struct model_load_options {
     ggml_backend_t backend = nullptr; // Borrowed; it must outlive the loaded model.
-    bool require_v2_medium = true;
+    // Production artifacts must match one of the reviewed v2 source profiles
+    // (currently medium or large). False is reserved for tiny unit fixtures.
+    bool require_supported_v2_profile = true;
     bool allow_f32 = true;
     bool allow_f16 = true;
     bool allow_quantized = true;

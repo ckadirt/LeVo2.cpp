@@ -33,3 +33,22 @@ does not rewrite their historical validation.
 - Recorded the full approved scope and explicit no-duplicate-renderer rule in
   [`v2-large-plan.md`](v2-large-plan.md). Pending: profile-based converter and
   strict loader implementation, followed by CUDA-only validation.
+
+### 2026-08-13 — profile-aware conversion and loading implemented
+
+- Replaced the converter's v2-medium-only architecture constants with reviewed
+  immutable `v2-medium` and `v2-large` specifications. The `v2-large`
+  specification declares 2048 hidden width, 11008 FFN width, 36 main blocks,
+  12 detail blocks, 16 attention/KV heads, and exactly 452 runtime tensors.
+- The production CLI now requires `--variant` (default `v2-medium`) and
+  verifies the selected `model.pt` byte count/SHA-256 and `config.yaml` byte
+  count/SHA-256 before conversion. Its hidden unverified mode exists solely
+  for the tiny deterministic unit fixture; it is not used for release work.
+- Generalized the strict C++ loader from a medium-only branch to a recognized
+  v2 source-profile dispatcher. It checks the profile name, repository,
+  revision, source/config digests, tokenizer/runtime identity, every
+  architecture field, exact tensor shapes/types, and the profile-specific
+  inventory count before allocating weights.
+- Rebuilt the CUDA configuration and ran the converter test suite with the
+  project environment: **4 passed**. This is source-level validation only;
+  no large checkpoint inference or render has been run on CPU.

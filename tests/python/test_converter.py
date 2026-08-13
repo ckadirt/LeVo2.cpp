@@ -38,6 +38,17 @@ def test_unknown_audiolm_tensor_is_fatal() -> None:
         conv.inspect_state_dict({"audiolm.new_parameter.weight": torch.zeros(1)}, strict_shapes=False)
 
 
+def test_released_v2_model_specs_have_distinct_complete_inventories() -> None:
+    assert set(conv.MODEL_SPECS) == {"v2-medium", "v2-large"}
+    assert conv.V2_MEDIUM.tensor_count == 380
+    assert conv.V2_LARGE.tensor_count == 452
+    assert conv.V2_LARGE.width == 2048
+    assert conv.V2_LARGE.ffn == 11008
+    assert conv.V2_LARGE.main_blocks == 36
+    assert len(conv._rules(conv.V2_MEDIUM)) == conv.V2_MEDIUM.tensor_count
+    assert len(conv._rules(conv.V2_LARGE)) == conv.V2_LARGE.tensor_count
+
+
 def test_synthetic_f16_artifact_is_deterministic(tmp_path: Path) -> None:
     pytest.importorskip("gguf")
     model = tmp_path / "model.pt"

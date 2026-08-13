@@ -220,17 +220,71 @@ std::optional<quantization::profile> parse_quantization(const gguf_context * con
     return profile;
 }
 
-void validate_v2_medium(const gguf_context * context, const model_hparams & hparams,
-                        const std::optional<quantization::profile> & profile) {
-    const auto expect_string = [context](const char * key, const char * expected) {
+struct v2_profile {
+    const char * label;
+    const char * name;
+    const char * model_repository;
+    const char * model_revision;
+    const char * model_sha256;
+    const char * config_sha256;
+    int32_t main_layers;
+    int32_t detail_layers;
+    int32_t embedding_length;
+    int32_t feed_forward_length;
+    int32_t attention_heads;
+    std::size_t tensor_count;
+};
+
+constexpr v2_profile v2_medium_profile = {
+    "v2-medium", "LeVo2 v2-medium", "lglg666/SongGeneration-v2-medium",
+    "7d91660ebfa041e29bace194f5631e775796f600",
+    "4ef2be41f6d838824f5432491408f68d9ffbeda3b1349e1208f9cdfcc64445b1",
+    "9b1e1cb79b9824816e9f119e1d3e1c3dbb91265121fdd4219667f8e0158a563f",
+    28, 12, 1536, 8960, 12, 380,
+};
+
+constexpr v2_profile v2_large_profile = {
+    "v2-large", "LeVo2 v2-large", "lglg666/SongGeneration-v2-large",
+    "115805364ad74479fb3764fe65970c92faeb1a5a",
+    "dc763aa9a76a22a87597c2faf9a51c24d13349ac754699b37e9068b483639def",
+    "14a991bd7342b9dde348e6324afd44b5c6ecb1db8d0ed4d2dbe666b220b04c59",
+    36, 12, 2048, 11008, 16, 452,
+};
+
+const v2_profile & recognize_v2_profile(const gguf_context * context) {
+    const std::string repository = required_string(context, gguf_keys::source_model_repository);
+    for (const v2_profile * profile : {&v2_medium_profile, &v2_large_profile}) {
+        if (repository == profile->model_repository) return *profile;
+    }
+    fail("metadata " + quote(gguf_keys::source_model_repository) +
+         " is not a recognized reviewed v2 LeLM profile");
+}
+
+model_hparams profile_hparams(const v2_profile & profile) {
+    model_hparams result;
+    result.main_layers = profile.main_layers;
+    result.detail_layers = profile.detail_layers;
+    result.embedding_length = profile.embedding_length;
+    result.feed_forward_length = profile.feed_forward_length;
+    result.attention_heads = profile.attention_heads;
+    result.kv_attention_heads = profile.attention_heads;
+    return result;
+}
+
+void validate_v2_profile(const gguf_context * context, const model_hparams & hparams,
+                         const v2_profile & source_profile,
+                         const std::optional<quantization::profile> & quant_profile) {
+    const auto expect_string = [context, &source_profile](const char * key, const char * expected) {
         const std::string actual = required_string(context, key);
         if (actual != expected) {
-            fail("metadata " + quote(key) + " does not match the pinned v2-medium source");
+            fail("metadata " + quote(key) + " does not match the pinned " + source_profile.label + " source");
         }
     };
-    expect_string(gguf_keys::source_model_repository, "lglg666/SongGeneration-v2-medium");
-    expect_string(gguf_keys::source_model_revision,
-                  "7d91660ebfa041e29bace194f5631e775796f600");
+    expect_string(gguf_keys::name, source_profile.name);
+    expect_string(gguf_keys::source_repository,
+                  (std::string("https://huggingface.co/") + source_profile.model_repository).c_str());
+    expect_string(gguf_keys::source_model_repository, source_profile.model_repository);
+    expect_string(gguf_keys::source_model_revision, source_profile.model_revision);
     expect_string(gguf_keys::source_runtime_repository, "lglg666/SongGeneration-Runtime");
     expect_string(gguf_keys::source_runtime_revision,
                   "cc258cc694a63114c61684cc26d0583b8ad777d0");
@@ -238,11 +292,9 @@ void validate_v2_medium(const gguf_context * context, const model_hparams & hpar
                   "cc258cc694a63114c61684cc26d0583b8ad777d0");
     expect_string(gguf_keys::tokenizer_sha256,
                   "f7c9b2dba4a296b1aa76c16a34b8225c0c118978400d4bb66bff0902d702f5b8");
-    expect_string(gguf_keys::source_model_sha256,
-                  "4ef2be41f6d838824f5432491408f68d9ffbeda3b1349e1208f9cdfcc64445b1");
-    expect_string(gguf_keys::source_config_sha256,
-                  "9b1e1cb79b9824816e9f119e1d3e1c3dbb91265121fdd4219667f8e0158a563f");
-    const model_hparams expected;
+    expect_string(gguf_keys::source_model_sha256, source_profile.model_sha256);
+    expect_string(gguf_keys::source_config_sha256, source_profile.config_sha256);
+    const model_hparams expected = profile_hparams(source_profile);
     expect_equal(gguf_keys::main_layers, hparams.main_layers, expected.main_layers);
     expect_equal(gguf_keys::detail_layers, hparams.detail_layers, expected.detail_layers);
     expect_equal(gguf_keys::embedding_length, hparams.embedding_length, expected.embedding_length);
@@ -267,8 +319,8 @@ void validate_v2_medium(const gguf_context * context, const model_hparams & hpar
     }
 
     const uint32_t file_type = required_u32(context, gguf_keys::file_type);
-    if (profile) {
-        if (file_type != quantization::gguf_file_type(*profile)) {
+    if (quant_profile) {
+        if (file_type != quantization::gguf_file_type(*quant_profile)) {
             fail("general.file_type does not match the declared quantization profile");
         }
     } else if (file_type != 0 && file_type != 1) {
@@ -301,6 +353,7 @@ void validate_tensor(const gguf_context * context, const std::string & name,
 }
 
 void validate_tensor_inventory(const gguf_context * context, const model_hparams & hparams,
+                               const v2_profile & source_profile,
                                const std::optional<quantization::profile> & profile) {
     const uint32_t file_type = required_u32(context, gguf_keys::file_type);
     const ggml_type type = file_type == 0 ? GGML_TYPE_F32 : GGML_TYPE_F16;
@@ -363,12 +416,15 @@ void validate_tensor_inventory(const gguf_context * context, const model_hparams
     add_tower(hparams.main_layers, false);
     add_tower(hparams.detail_layers, true);
 
-    if (expected.size() != 380U) {
-        fail("internal v2-medium tensor inventory does not contain 380 tensors");
+    if (expected.size() != source_profile.tensor_count) {
+        std::ostringstream message;
+        message << "internal " << source_profile.label << " tensor inventory does not contain "
+                << source_profile.tensor_count << " tensors";
+        fail(message.str());
     }
     if (static_cast<std::size_t>(gguf_get_n_tensors(context)) != expected.size()) {
         std::ostringstream message;
-        message << "GGUF contains " << gguf_get_n_tensors(context) << " tensors; v2-medium requires exactly "
+        message << "GGUF contains " << gguf_get_n_tensors(context) << " tensors; " << source_profile.label << " requires exactly "
                 << expected.size();
         fail(message.str());
     }
@@ -574,21 +630,22 @@ std::shared_ptr<model> model::load_gguf(const std::string & path, const model_lo
     }
     validate_tensor_file_bounds(gguf.get(), input_size);
     const model_hparams hparams = parse_hparams(gguf.get());
-    const std::optional<quantization::profile> profile = parse_quantization(gguf.get());
+    const std::optional<quantization::profile> quant_profile = parse_quantization(gguf.get());
     model_provenance provenance;
     provenance.name = required_string(gguf.get(), gguf_keys::name);
     provenance.model_sha256 = required_string(gguf.get(), gguf_keys::source_model_sha256);
     provenance.artifact_sha256 = token_io::file_sha256(path);
     tokenizer_assets tokenizer;
-    if (options.require_v2_medium) {
+    if (options.require_supported_v2_profile) {
         provenance.model_repository = required_string(gguf.get(), gguf_keys::source_model_repository);
         provenance.model_revision = required_string(gguf.get(), gguf_keys::source_model_revision);
         provenance.runtime_repository = required_string(gguf.get(), gguf_keys::source_runtime_repository);
         provenance.runtime_revision = required_string(gguf.get(), gguf_keys::source_runtime_revision);
         provenance.tokenizer_revision = required_string(gguf.get(), gguf_keys::tokenizer_revision);
         provenance.tokenizer_sha256 = required_string(gguf.get(), gguf_keys::tokenizer_sha256);
-        validate_v2_medium(gguf.get(), hparams, profile);
-        validate_tensor_inventory(gguf.get(), hparams, profile);
+        const v2_profile & source_profile = recognize_v2_profile(gguf.get());
+        validate_v2_profile(gguf.get(), hparams, source_profile, quant_profile);
+        validate_tensor_inventory(gguf.get(), hparams, source_profile, quant_profile);
         tokenizer = parse_tokenizer(gguf.get());
     }
 
