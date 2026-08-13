@@ -155,6 +155,25 @@ the digest from the GGUF bytes rather than trusting a sidecar.
   render matrix and actual quality measurements. The artifact remains local
   until those gates pass.
 
+### 2026-08-13 — LeLM K-profile smoke expansion (local only)
+
+- Produced native, self-describing Q6_K and Q5_K_M LeLM artifacts from the
+  frozen F16 source. Both sidecar checksums pass and both retain policy
+  revision 1 plus the source-artifact digest.
+- Local Q6_K: `LeVo2-v2-medium-Q6_K.gguf`, 2,249,071,968 bytes,
+  SHA-256 `06304f3f49ee6d1ed9265dde0651af199017cb6ca743d5f5011f6900a63a3c90`.
+  CUDA greedy generation completed as a valid `[3,50]` token artifact;
+  token payload SHA-256
+  `37c15a3a0b2ea4d65cc8447d31ddb6f9e391ec4a2d50442b6ba598ae6a761fa3`.
+- Local Q5_K_M: `LeVo2-v2-medium-Q5_K_M.gguf`, 2,077,777,248 bytes,
+  SHA-256 `fc8616097d264d8b5437ab01f453d9ac1bfaba9ef834f3a47d728f0fd20724de`.
+  CUDA greedy generation completed as a valid `[3,50]` token artifact;
+  token payload SHA-256
+  `d240ddc453d50a80704398110530de7050c7fe00e57f732f2e337f4379b10eff`.
+- Q4_K_M conversion is in progress. Q6_K/Q5_K_M are deliberately not yet
+  published: the full LeLM and Flow profile matrix, frozen comparison, and
+  release-side manifest review remain publication gates.
+
 ## Deviations
 
 None so far.
