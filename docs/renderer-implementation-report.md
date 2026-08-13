@@ -2,12 +2,14 @@
 
 ## Status
 
-The native renderer is complete and gated. Token-to-WAV rendering runs entirely
-in C++/GGML: dual RVQ conditioning, the 16-block Flow velocity transformer,
+The native renderer implementation is feature-complete. Final v0.2 release
+validation is in progress; the eight-case full-window matrix is not considered
+accepted until measured reports are recorded below. Token-to-WAV rendering
+runs entirely in C++/GGML: dual RVQ conditioning, the 16-block Flow velocity transformer,
 classifier-free guidance, uniform Euler integration, 1000/750/250 window
 continuation, the five-stage Oobleck decoder, crossfade assembly, and the F32
-WAV writer. All four release cases of `renderer-parity.md` pass their frozen F32
-gates against the pinned Python oracle at both one and fifty Euler steps.
+WAV writer. The earlier WIP assertion that all release cases passed was not
+backed by committed matrix reports and is superseded by this trace.
 
 The official Python decoder remains in the repository as the reference oracle,
 not as the production path. F16 renderer execution is still deferred until it
@@ -128,3 +130,25 @@ classifier-free branches, sigma-min in-context interpolation and hard restore,
 1000-frame windows, 750-frame hops, and 250-frame continuation context. Its
 asset-free solver/window tests pass. A full 1000-frame one-step and official
 50-step token-to-WAV run remain release gates rather than assumed results.
+
+## v0.2 release finalization trace
+
+Finalization resumed from clean `origin/main` commit `c45e78b` on 2026-08-13.
+The workspace is not volume-backed, so every accepted gate is committed and
+pushed before the next long-running step.
+
+- Restored GGML `8846b79e66747bb9f68597420e95114c177315ce` and LeVo
+  `653cbcf4716101834900c75b7d5da43b07e15d5b` from their public repositories.
+- Baseline hardware is an RTX 4090 (24 GiB), driver 595.84, and CUDA toolkit
+  13.2. The version differs from the original CUDA 12.4 implementation host and
+  is recorded as release-matrix coverage rather than silently substituted.
+- A clean CPU release build with parity tools passed 21/21 CTests.
+- The asset-free Python suite passed 16 tests with 15 credential/heavy tests
+  skipped by their explicit opt-in gates.
+- The downloaded Flow, VAE, config, and public LeLM inputs match every pinned
+  byte count and SHA-256 recorded in this report and the v0.1 report.
+- The public Hugging Face repository still contained only the v0.1 LeLM
+  artifact when finalization resumed. The README statement that renderer GGUFs
+  were already published was premature; publication remains a release gate.
+- The release runner now emits structured per-case timing, metrics, artifact
+  hashes, and polled peak GPU memory so the final status can be evidence-backed.

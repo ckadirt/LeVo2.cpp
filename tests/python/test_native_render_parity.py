@@ -49,7 +49,8 @@ def test_native_render_parity(tmp_path: Path, fixture: str, frames: int, steps: 
          "--tool", str(tool), "--flow-model", str(flow), "--vae-model", str(vae),
          "--workdir", str(tmp_path), "--steps", str(steps), "--guidance", "1.5",
          "--seed", "1234", "--backend", "cuda", "--device", "cuda",
-         "--source-dir", str(SOURCE), "--runtime-dir", str(RUNTIME)],
+         "--source-dir", str(SOURCE), "--runtime-dir", str(RUNTIME),
+         "--report", str(_report_path(tmp_path, fixture, steps))],
         text=True, capture_output=True,
     )
     assert completed.returncode == 0, completed.stdout + completed.stderr
@@ -57,3 +58,10 @@ def test_native_render_parity(tmp_path: Path, fixture: str, frames: int, steps: 
     assert "audio_left max_abs=" in completed.stdout
     assert f"source_frames={frames}" in completed.stdout
     assert f"samples_per_channel={frames * 1920}" in completed.stdout
+
+
+def _report_path(tmp_path: Path, fixture: str, steps: int) -> Path:
+    configured = os.environ.get("LEVO_RENDER_REPORT_DIR")
+    directory = Path(configured) if configured else tmp_path
+    directory.mkdir(parents=True, exist_ok=True)
+    return directory / f"{Path(fixture).stem}-steps-{steps}.json"

@@ -16,7 +16,9 @@ Latents are exported channel-major ``[W,64,1000]`` by the oracle and frame-major
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
+import re
 import subprocess
 import sys
 import time
@@ -34,6 +36,68 @@ from export_renderer_oracles import (  # noqa: E402
 )
 
 ORACLE = Path(__file__).resolve().parent / "export_renderer_oracles.py"
+METRIC_RE = re.compile(
+    r"^(?P<label>\S+) max_abs=(?P<max_abs>\S+) rmse=(?P<rmse>\S+) "
+    r"rel_rms=(?P<rel_rms>\S+) cosine=(?P<cosine>\S+)$"
+)
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for block in iter(lambda: handle.read(8 * 1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def _gpu_memory_mib() -> int | None:
+    """Return total device memory in use without adding a Python dependency."""
+    try:
+        result = subprocess.run(
+            ["nvidia-smi", "--query-gpu=memory.used", "--format=csv,noheader,nounits"],
+            text=True,
+            capture_output=True,
+            check=True,
+            timeout=5,
+        )
+        values = [int(line.strip()) for line in result.stdout.splitlines() if line.strip()]
+        return sum(values) if values else None
+    except (FileNotFoundError, subprocess.SubprocessError, ValueError):
+        return None
+
+
+def _run_measured(command: list[str]) -> tuple[subprocess.CompletedProcess[str], float, int | None]:
+    """Run a release-gate subprocess and poll whole-device peak memory."""
+    started = time.monotonic()
+    peak = _gpu_memory_mib()
+    process = subprocess.Popen(command, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    while process.poll() is None:
+        used = _gpu_memory_mib()
+        if used is not None:
+            peak = used if peak is None else max(peak, used)
+        time.sleep(0.1)
+    stdout, stderr = process.communicate()
+    used = _gpu_memory_mib()
+    if used is not None:
+        peak = used if peak is None else max(peak, used)
+    return (
+        subprocess.CompletedProcess(command, process.returncode, stdout, stderr),
+        time.monotonic() - started,
+        peak,
+    )
+
+
+def _parse_metrics(output: str) -> dict[str, dict[str, float]]:
+    metrics: dict[str, dict[str, float]] = {}
+    for line in output.splitlines():
+        match = METRIC_RE.fullmatch(line.strip())
+        if match is None:
+            continue
+        metrics[match.group("label")] = {
+            name: float(match.group(name))
+            for name in ("max_abs", "rmse", "rel_rms", "cosine")
+        }
+    return metrics
 
 
 def _load_frames(tokens: Path) -> int:
@@ -132,9 +196,13 @@ def main() -> int:
             command.extend(["--runtime-dir", str(args.runtime_dir)])
         if args.wav_output is not None:
             command.extend(["--wav-output", str(args.wav_output)])
-        started = time.monotonic()
-        subprocess.run(command, check=True)
-        oracle_seconds = time.monotonic() - started
+        oracle_run, oracle_seconds, oracle_peak_gpu_mib = _run_measured(command)
+        sys.stdout.write(oracle_run.stdout)
+        sys.stderr.write(oracle_run.stderr)
+        if oracle_run.returncode != 0:
+            raise subprocess.CalledProcessError(oracle_run.returncode, command)
+    else:
+        oracle_peak_gpu_mib = None
 
     with np.load(oracle_npz, allow_pickle=False) as captured:
         references = _write_references(captured, args.workdir, windows)
@@ -147,15 +215,17 @@ def main() -> int:
                "--audio", str(references["audio"])]
     if "decoded" in references:
         command.extend(["--decoded-windows", str(references["decoded"])])
-    started = time.monotonic()
-    completed = subprocess.run(command, text=True, capture_output=True)
-    native_seconds = time.monotonic() - started
+    completed, native_seconds, native_peak_gpu_mib = _run_measured(command)
     sys.stdout.write(completed.stdout)
     sys.stderr.write(completed.stderr)
 
     if args.report is not None:
+        args.report.parent.mkdir(parents=True, exist_ok=True)
         args.report.write_text(json.dumps({
-            "tokens": str(args.tokens),
+            "format": "levo2-render-parity-report-v1",
+            "tokens": {"filename": args.tokens.name, "sha256": _sha256(args.tokens)},
+            "flow_model": {"filename": args.flow_model.name, "sha256": _sha256(args.flow_model)},
+            "vae_model": {"filename": args.vae_model.name, "sha256": _sha256(args.vae_model)},
             "frames": frames,
             "padded_frames": int(padded),
             "windows": windows,
@@ -165,9 +235,11 @@ def main() -> int:
             "backend": args.backend,
             "returncode": completed.returncode,
             "oracle_seconds": round(oracle_seconds, 3),
+            "oracle_peak_gpu_mib": oracle_peak_gpu_mib,
             "native_seconds": round(native_seconds, 3),
-            "metrics": completed.stdout.strip().splitlines(),
-        }, indent=2) + "\n")
+            "native_peak_gpu_mib": native_peak_gpu_mib,
+            "metrics": _parse_metrics(completed.stdout),
+        }, indent=2, sort_keys=True) + "\n")
     return completed.returncode
 
 
