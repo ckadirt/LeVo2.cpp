@@ -52,3 +52,14 @@ does not rewrite their historical validation.
 - Rebuilt the CUDA configuration and ran the converter test suite with the
   project environment: **4 passed**. This is source-level validation only;
   no large checkpoint inference or render has been run on CPU.
+
+### 2026-08-13 — conversion gate deviation: output-head profile leak
+
+- The first real, hash-verified v2-large conversion stopped before writing a
+  GGUF because its `output.vocal` tensor was `[16385, 2048]` while two residual
+  converter rules still expected the medium width `[16385, 1536]`.
+- This was a converter-specification defect, not an upstream mismatch. The
+  strict shape gate did exactly what it should: no artifact was emitted. Both
+  output-head rules now use the selected profile width, with a regression
+  assertion for the v2-large shapes. Conversion is being retried from the
+  verified local source only after that source/test fix.

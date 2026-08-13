@@ -150,8 +150,8 @@ def _rules(spec: ModelSpec = V2_MEDIUM) -> tuple[TensorRule, ...]:
             ])
         out.append(TensorRule(f"audiolm.{tower}.model.norm.weight", f"{prefix}.output_norm", (spec.width,)))
     out.extend([
-        TensorRule("audiolm.linears.0.weight", "output.vocal", (CODE_OUTPUT_VOCAB, WIDTH)),
-        TensorRule("audiolm.linears.1.weight", "output.bgm", (CODE_OUTPUT_VOCAB, WIDTH)),
+        TensorRule("audiolm.linears.0.weight", "output.vocal", (CODE_OUTPUT_VOCAB, spec.width)),
+        TensorRule("audiolm.linears.1.weight", "output.bgm", (CODE_OUTPUT_VOCAB, spec.width)),
     ])
     return tuple(out)
 

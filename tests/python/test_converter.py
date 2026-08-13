@@ -47,6 +47,9 @@ def test_released_v2_model_specs_have_distinct_complete_inventories() -> None:
     assert conv.V2_LARGE.main_blocks == 36
     assert len(conv._rules(conv.V2_MEDIUM)) == conv.V2_MEDIUM.tensor_count
     assert len(conv._rules(conv.V2_LARGE)) == conv.V2_LARGE.tensor_count
+    large_rules = {rule.target: rule for rule in conv._rules(conv.V2_LARGE)}
+    assert large_rules["output.vocal"].shape == (conv.CODE_OUTPUT_VOCAB, 2048)
+    assert large_rules["output.bgm"].shape == (conv.CODE_OUTPUT_VOCAB, 2048)
 
 
 def test_synthetic_f16_artifact_is_deterministic(tmp_path: Path) -> None:
