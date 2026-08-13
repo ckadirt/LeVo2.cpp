@@ -61,8 +61,10 @@ int main() {
     assert(json.find("lyrics_sha256") != std::string::npos);
     assert(json.find("\"backend\": \"CPU\"") != std::string::npos);
     assert(json.find("\"cfg_scale\": 1.25") != std::string::npos);
+    assert(json.find("\"timings\": {") != std::string::npos);
     assert(json.find("\\nwith \\\"quotes\\\"") != std::string::npos);
     assert(tensor_sha256(expected) == "7508f1b33c15dd460825c9203fe6178ca8949e298cb7f657f7371cbc2c73cd1b");
+    assert(file_sha256(npy).size() == 64);
 
     assert(throws([&] { write_tokens_npy(root / "bad-dim.npy", {1, 2}); }));
     assert(throws([&] { write_tokens_npy(root / "bad-token.npy", {0, 1, -1}); }));

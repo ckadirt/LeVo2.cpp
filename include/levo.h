@@ -257,4 +257,23 @@ render_result render_tokens_to_audio(const render_config & config,
 void write_render_wav(const std::filesystem::path & output_path,
                       const render_result & result);
 
+struct render_artifact_info {
+    std::filesystem::path wav_path;
+    std::filesystem::path metadata_path;
+    std::uintmax_t wav_bytes = 0;
+    std::string wav_sha256;
+    double wav_write_seconds = 0.0;
+    double artifact_seconds = 0.0;
+};
+
+// Returns song.wav.json for song.wav.
+std::filesystem::path render_metadata_path(const std::filesystem::path & wav_path);
+
+// Writes the WAV and its schema-1 provenance/timing sidecar through staged
+// temporary files. The existing write_render_wav API remains the WAV-only
+// primitive for callers that deliberately do not want metadata.
+render_artifact_info write_render_artifact(const std::filesystem::path & output_path,
+                                           const render_result & result,
+                                           const render_config & config);
+
 } // namespace levo

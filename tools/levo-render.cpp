@@ -1,4 +1,5 @@
 #include "levo.h"
+#include "levo-progress.h"
 
 #include <cmath>
 #include <cstdint>
@@ -48,20 +49,6 @@ float parse_float(const std::string & value, const char * label) {
     }
 }
 
-const char * stage_name(levo::render_stage stage) {
-    switch (stage) {
-        case levo::render_stage::loading_tokens: return "loading tokens";
-        case levo::render_stage::loading_flow: return "loading Flow";
-        case levo::render_stage::generating_latents: return "generating Flow latents";
-        case levo::render_stage::releasing_flow: return "releasing Flow";
-        case levo::render_stage::loading_vae: return "loading VAE";
-        case levo::render_stage::decoding_window: return "decoding VAE window";
-        case levo::render_stage::assembling_audio: return "assembling audio";
-        case levo::render_stage::complete: return "complete";
-    }
-    return "unknown";
-}
-
 std::vector<float> read_noise_f32(const std::string & path) {
     std::ifstream input(path, std::ios::binary | std::ios::ate);
     if (!input) throw std::runtime_error("cannot open F32 noise file: " + path);
@@ -81,7 +68,8 @@ void usage(const char * program) {
     std::cout << "Usage:\n  " << program
               << " tokens.npy --flow-model FLOW.gguf --vae-model VAE.gguf --output song.wav"
               << " [--backend auto|cpu|cuda|gpu --device N --steps N --cfg X --seed N]"
-              << " [--noise-f32 window-major-noise.f32]\n";
+              << " [--noise-f32 window-major-noise.f32]"
+              << " [--progress plain|json|none --progress-interval SECONDS --quiet]\n";
 }
 
 } // namespace
@@ -95,6 +83,8 @@ int main(int argc, char ** argv) {
         levo::render_config config;
         config.tokens_path = argv[1];
         std::string output;
+        levo_cli::progress_mode progress_mode = levo_cli::progress_mode::plain;
+        double progress_interval = 1.0;
         bool flow = false, vae = false, output_present = false;
         for (int index = 2; index < argc; ++index) {
             const std::string option = argv[index];
@@ -111,22 +101,27 @@ int main(int argc, char ** argv) {
             else if (option == "--cfg") config.cfg_scale = parse_float(value(), "CFG scale");
             else if (option == "--seed") config.seed = parse_u64(value(), "seed");
             else if (option == "--noise-f32") config.external_noise = read_noise_f32(value());
+            else if (option == "--progress") progress_mode = levo_cli::parse_progress_mode(value());
+            else if (option == "--progress-interval") progress_interval = levo_cli::parse_progress_interval(value());
+            else if (option == "--quiet") progress_mode = levo_cli::progress_mode::none;
             else throw std::invalid_argument("unknown option '" + option + "'");
         }
         if (!flow || !vae || !output_present) throw std::invalid_argument("--flow-model, --vae-model, and --output are required");
         if (std::filesystem::path(output).extension() != ".wav") {
             throw std::invalid_argument("--output must use the .wav extension");
         }
-        const auto progress = [](const levo::render_progress & value) {
-            std::cerr << stage_name(value.stage);
-            if (value.total_windows != 0) std::cerr << " " << value.completed_windows << "/" << value.total_windows;
-            std::cerr << '\n';
-        };
-        const levo::render_result result = levo::render_tokens_to_audio(config, progress);
-        levo::write_render_wav(output, result);
+        levo_cli::install_signal_handlers();
+        config.cancelled = levo_cli::cancellation_requested;
+        levo_cli::render_progress_writer writer(progress_mode, progress_interval);
+        const levo::render_result result = levo::render_tokens_to_audio(
+            config, [&writer](const levo::render_progress & value) { writer.update(value); });
+        levo::write_render_artifact(output, result, config);
         std::cout << "wrote " << output << " (" << result.samples_per_channel << " stereo samples, "
                   << result.provenance.backend_name << ")\n";
         return 0;
+    } catch (const levo::operation_cancelled & error) {
+        std::cerr << "cancelled: " << error.what() << '\n';
+        return 130;
     } catch (const std::exception & error) {
         std::cerr << "error: " << error.what() << '\n';
         return 1;

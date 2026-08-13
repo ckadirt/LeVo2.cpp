@@ -1,4 +1,5 @@
 #include "levo.h"
+#include "levo-progress.h"
 
 #include <cmath>
 #include <exception>
@@ -36,7 +37,8 @@ void usage(const char * program) {
         << "Autoregressive token generation:\n"
         << "  " << program << " --model MODEL.gguf --lyrics lyrics.txt [--prompt TEXT]\n"
         << "      --duration SECONDS --output tokens.npy\n"
-        << "      [--backend auto|cpu|cuda|gpu] [--device N] [--greedy] [--seed N]\n";
+        << "      [--backend auto|cpu|cuda|gpu] [--device N] [--greedy] [--seed N]\n"
+        << "      [--progress plain|json|none] [--progress-interval SECONDS] [--quiet]\n";
 }
 
 std::string read_text_file(const std::string & path) {
@@ -101,6 +103,8 @@ int parse_device(const std::string & value) {
 struct cli_generation_request {
     levo::generation_config config;
     std::filesystem::path output_path;
+    levo_cli::progress_mode progress = levo_cli::progress_mode::plain;
+    double progress_interval = 1.0;
 };
 
 cli_generation_request parse_generation(int argc, char ** argv) {
@@ -142,6 +146,12 @@ cli_generation_request parse_generation(int argc, char ** argv) {
             config.seed_present = true;
         } else if (argument == "--greedy") {
             config.sampling.use_sampling = false;
+        } else if (argument == "--progress") {
+            request.progress = levo_cli::parse_progress_mode(value());
+        } else if (argument == "--progress-interval") {
+            request.progress_interval = levo_cli::parse_progress_interval(value());
+        } else if (argument == "--quiet") {
+            request.progress = levo_cli::progress_mode::none;
         } else if (argument == "--help") {
             throw std::invalid_argument("--help must be used by itself");
         } else {
@@ -162,6 +172,7 @@ cli_generation_request parse_generation(int argc, char ** argv) {
 
 int main(int argc, char ** argv) {
     try {
+        levo_cli::install_signal_handlers();
         if (argc == 1 || std::string(argv[1]) == "--help") {
             usage(argv[0]);
             return 0;
@@ -192,13 +203,11 @@ int main(int argc, char ** argv) {
         }
 
         if (command.rfind("--", 0) == 0) {
-            const cli_generation_request request = parse_generation(argc, argv);
-            const auto progress = [](const levo::generation_progress & value) {
-                if (value.completed_steps == value.total_steps || value.completed_steps % 25 == 0) {
-                    std::cerr << "generation " << value.completed_steps << '/' << value.total_steps << " delayed steps\n";
-                }
-            };
-            const levo::generation_result result = levo::generate_tokens(request.config, progress);
+            cli_generation_request request = parse_generation(argc, argv);
+            request.config.cancelled = levo_cli::cancellation_requested;
+            levo_cli::generation_progress_writer writer(request.progress, request.progress_interval);
+            const levo::generation_result result = levo::generate_tokens(
+                request.config, [&writer](const levo::generation_progress & value) { writer.update(value); });
             levo::write_generation_artifact(request.output_path, result, request.config);
             std::cout << "wrote " << request.output_path << " [3, " << result.frame_count << "]"
                       << " using " << result.backend_name << '\n';
@@ -207,6 +216,9 @@ int main(int argc, char ** argv) {
 
         usage(argv[0]);
         throw std::invalid_argument("unknown command '" + command + "'");
+    } catch (const levo::operation_cancelled & error) {
+        std::cerr << "cancelled: " << error.what() << '\n';
+        return 130;
     } catch (const std::exception & error) {
         std::cerr << "error: " << error.what() << '\n';
         return 1;

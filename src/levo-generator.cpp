@@ -445,6 +445,12 @@ void write_generation_artifact(const std::filesystem::path & output_path,
     metadata.cfg_scale = config.cfg_scale;
     metadata.seed_present = config.seed_present;
     metadata.seed = config.seed;
+    metadata.backend_seconds = result.timings.backend_seconds;
+    metadata.model_load_seconds = result.timings.model_load_seconds;
+    metadata.conditioning_seconds = result.timings.conditioning_seconds;
+    metadata.prefill_seconds = result.timings.prefill_seconds;
+    metadata.generation_seconds = result.timings.generation_seconds;
+    metadata.total_seconds = result.timings.total_seconds;
     token_io::write(output_path, result.tokens, metadata);
 }
 

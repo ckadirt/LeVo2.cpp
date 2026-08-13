@@ -52,6 +52,13 @@ struct artifact_metadata {
     float cfg_scale = 1.5F;
     bool seed_present = false;
     uint64_t seed = 0;
+
+    double backend_seconds = 0.0;
+    double model_load_seconds = 0.0;
+    double conditioning_seconds = 0.0;
+    double prefill_seconds = 0.0;
+    double generation_seconds = 0.0;
+    double total_seconds = 0.0;
 };
 
 struct artifact {
@@ -67,6 +74,10 @@ std::filesystem::path metadata_path(const std::filesystem::path & npy_path);
 // SHA-256 of the canonical little-endian int32 C-order tensor payload (not
 // including the NumPy header).
 std::string tensor_sha256(const std::vector<int32_t> & tokens);
+
+// Streaming SHA-256 of a complete file. Shared by token and WAV provenance
+// writers; it does not load the file into memory.
+std::string file_sha256(const std::filesystem::path & path);
 
 // Validate and write a NumPy 1.0 (or, for an unusually large header, 2.0)
 // int32 C-order array with shape [3,T]. The JSON companion is written beside

@@ -162,6 +162,13 @@ void validate_metadata(const artifact_metadata & metadata) {
             throw std::invalid_argument("sampling ignore token is outside [0, 16385]");
         }
     }
+    for (const double seconds : {metadata.backend_seconds, metadata.model_load_seconds,
+                                 metadata.conditioning_seconds, metadata.prefill_seconds,
+                                 metadata.generation_seconds, metadata.total_seconds}) {
+        if (!std::isfinite(seconds) || seconds < 0.0) {
+            throw std::invalid_argument("generation timings must be finite and non-negative");
+        }
+    }
 }
 
 void put_u16(std::ostream & out, uint16_t value) {
@@ -394,7 +401,15 @@ std::string manifest(const std::filesystem::path & npy_path,
         << "    \"seed\": ";
     if (metadata.seed_present) out << metadata.seed;
     else out << "null";
-    out << "\n  }\n}\n";
+    out << "\n  },\n"
+        << "  \"timings\": {\n"
+        << "    \"backend_seconds\": " << json_number(metadata.backend_seconds) << ",\n"
+        << "    \"model_load_seconds\": " << json_number(metadata.model_load_seconds) << ",\n"
+        << "    \"conditioning_seconds\": " << json_number(metadata.conditioning_seconds) << ",\n"
+        << "    \"prefill_seconds\": " << json_number(metadata.prefill_seconds) << ",\n"
+        << "    \"generation_seconds\": " << json_number(metadata.generation_seconds) << ",\n"
+        << "    \"total_seconds\": " << json_number(metadata.total_seconds) << "\n"
+        << "  }\n}\n";
     return out.str();
 }
 
@@ -442,6 +457,20 @@ std::string tensor_sha256(const std::vector<int32_t> & tokens) {
         bytes[3] = static_cast<uint8_t>(value >> 24);
         hash.update(bytes.data(), bytes.size());
     }
+    return hash.finish();
+}
+
+std::string file_sha256(const std::filesystem::path & path) {
+    std::ifstream input(path, std::ios::binary);
+    if (!input) throw std::runtime_error("cannot open file for SHA-256: " + path.string());
+    sha256 hash;
+    std::array<uint8_t, 1024U * 1024U> buffer{};
+    while (input) {
+        input.read(reinterpret_cast<char *>(buffer.data()), static_cast<std::streamsize>(buffer.size()));
+        const std::streamsize count = input.gcount();
+        if (count > 0) hash.update(buffer.data(), static_cast<std::size_t>(count));
+    }
+    if (!input.eof()) throw std::runtime_error("failed while hashing file: " + path.string());
     return hash.finish();
 }
 
