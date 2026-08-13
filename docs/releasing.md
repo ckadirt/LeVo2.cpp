@@ -64,9 +64,26 @@ Development milestones are pushed to the private `origin/main`. At release:
 2. Make `ckadirt/LeVo2.cpp` public.
 3. Push the annotated milestone tag (`v0.1.0` for the LeLM token generator,
    `v0.2.0` for the native renderer).
-4. Create a source release linking the exact Hugging Face revision and checksum.
-5. Confirm a public anonymous clone can initialize submodules and follow the
-   documented CPU and CUDA build commands.
+4. Create the GitHub Release as a draft, link the exact Hugging Face revision
+   and checksums, then publish it. Publishing runs
+   `.github/workflows/release.yml` against that exact tag.
+5. Wait for the required Linux x86_64 CPU and CUDA 12 jobs. Each builds shared
+   GGML runtime backends, verifies portable CPU dispatch configuration, runs
+   its applicable test suite, and smoke-tests the staged archive with no
+   `LD_LIBRARY_PATH`.
+6. Confirm the release contains the CPU and CUDA archive plus a `.sha256`
+   sidecar for each. The workflow refuses to overwrite an existing attachment;
+   correct a release mistake with a new tag rather than silently replacing
+   published bytes.
+7. Download an archive anonymously, verify `sha256sum -c`, unpack it, and run
+   `bin/levo-cli --smoke cpu`. Then confirm a public anonymous clone can
+   initialize submodules and follow the documented CPU and CUDA build commands.
+
+The binary archives include the tools, the Cantor shared engine, GGML runtime
+libraries, and required notices, but no model weights. Their exact layout and
+names are documented in `docs/artifact-naming.md`. CUDA archive users need a
+compatible NVIDIA driver; platform-specific CUDA runtime dependencies are not
+bundled.
 
 No quantized model is included. A quantized artifact receives its own parity
 report and manifest in a later release.

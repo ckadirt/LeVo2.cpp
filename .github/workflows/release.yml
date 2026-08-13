@@ -1,0 +1,182 @@
+name: Build and publish binary releases
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Existing annotated tag to build
+        required: true
+        type: string
+      publish:
+        description: Upload assets to that tag's existing GitHub Release
+        required: true
+        default: false
+        type: boolean
+
+# The workflow never creates or overwrites a release asset. A published release
+# or an explicit manual publish is the only path that needs write permission.
+permissions:
+  contents: write
+
+concurrency:
+  group: binary-release-${{ github.event.release.tag_name || inputs.release_tag || github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  linux:
+    name: ${{ matrix.label }}
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: linux-x86_64-cpu
+            label: Linux x86_64 CPU
+            backend: cpu
+            archive_suffix: cpu
+          - id: linux-x86_64-cuda12
+            label: Linux x86_64 CUDA 12
+            backend: cuda
+            archive_suffix: cuda12
+
+    steps:
+      - name: Check out the release tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name || inputs.release_tag }}
+          submodules: recursive
+
+      - name: Install packaging tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ccache ninja-build patchelf
+
+      - name: Install CUDA toolkit
+        if: matrix.backend == 'cuda'
+        uses: Jimver/cuda-toolkit@v0.2.30
+        with:
+          cuda: 12.8.0
+          method: network
+
+      - name: Restore compiler cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ccache
+          key: levo-release-${{ matrix.id }}-${{ github.sha }}
+          restore-keys: levo-release-${{ matrix.id }}-
+
+      - name: Configure
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake_args=(
+            -S . -B build -G Ninja
+            -DCMAKE_BUILD_TYPE=Release
+            -DLEVO_BUILD_TESTS=ON
+            -DLEVO_BUILD_PARITY_TOOLS=OFF
+            -DBUILD_SHARED_LIBS=ON
+            -DGGML_BACKEND_DL=ON
+            -DGGML_CPU_ALL_VARIANTS=ON
+            -DGGML_NATIVE=OFF
+            -DGGML_OPENMP=OFF
+          )
+          if [[ "${{ matrix.backend }}" == "cuda" ]]; then
+            cmake_args+=(
+              -DGGML_CUDA=ON
+              -DCMAKE_CUDA_ARCHITECTURES=75-virtual\;80-virtual\;86-virtual\;89-real\;90-real
+            )
+          fi
+          cmake "${cmake_args[@]}" 2>&1 | tee configure.log
+          # CPU dispatch is a release contract: do not silently ship a
+          # runner-native binary under the portable CPU asset name.
+          test "$(grep -c 'Adding CPU backend variant' configure.log || true)" -ge 2
+
+      - name: Build
+        run: cmake --build build --parallel "$(nproc)"
+
+      - name: Run CPU tests
+        if: matrix.backend == 'cpu'
+        run: ctest --test-dir build --output-on-failure
+
+      - name: Run non-GPU tests
+        if: matrix.backend == 'cuda'
+        run: ctest --test-dir build --output-on-failure --label-exclude cuda
+
+      - name: Smoke the build tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          build/bin/levo-cli --smoke cpu
+          build/bin/levo-render --help >/dev/null
+          build/bin/levo-cantor --help >/dev/null
+          test "$(nm -D --defined-only build/lib/liblevo-cantor-engine.so | awk '{print $3}' | grep -c '^cantor_engine_' || true)" -eq 13
+
+      - name: Package a relocatable archive
+        id: package
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+            version="${{ inputs.release_tag }}"
+            version="${version#v}"
+          fi
+          archive="LeVo2-v${version}-linux-x86_64-${{ matrix.archive_suffix }}.tar.gz"
+          root="LeVo2-v${version}-linux-x86_64-${{ matrix.archive_suffix }}"
+          stage="dist/${root}"
+          mkdir -p "${stage}/bin" "${stage}/lib"
+
+          install -m 0755 build/bin/levo-cli build/bin/levo-render build/bin/levo-cantor "${stage}/bin/"
+          cp -a build/lib/liblevo-cantor-engine.so* "${stage}/lib/"
+          find build/ggml/src -maxdepth 1 \( -type f -o -type l \) \( -name 'libggml.so*' -o -name 'libggml-base.so*' \) -exec cp -a {} "${stage}/lib/" \;
+          # ggml loads backend plugins by scanning the executable directory.
+          find build/bin -maxdepth 1 \( -type f -o -type l \) -name 'libggml-*.so*' -exec cp -a {} "${stage}/bin/" \;
+          install -m 0644 LICENSE THIRD_PARTY_NOTICES.md README.md "${stage}/"
+
+          for executable in "${stage}/bin/levo-cli" "${stage}/bin/levo-render" "${stage}/bin/levo-cantor"; do
+            patchelf --set-rpath '$ORIGIN/../lib' "${executable}"
+          done
+          find "${stage}/lib" -type f -name '*.so*' -print0 | xargs -0 -r -n1 patchelf --set-rpath '$ORIGIN'
+          find "${stage}/bin" -type f -name 'libggml-*.so*' -print0 | xargs -0 -r -n1 patchelf --set-rpath '$ORIGIN/../lib'
+
+          env -u LD_LIBRARY_PATH "${stage}/bin/levo-cli" --smoke cpu
+          env -u LD_LIBRARY_PATH "${stage}/bin/levo-render" --help >/dev/null
+          env -u LD_LIBRARY_PATH "${stage}/bin/levo-cantor" --help >/dev/null
+          ! readelf -d "${stage}/bin/levo-cantor" | grep -F "${GITHUB_WORKSPACE}/build"
+
+          tar -C dist -czf "${archive}" "${root}"
+          sha256sum "${archive}" > "${archive}.sha256"
+          echo "archive=${archive}" >> "$GITHUB_OUTPUT"
+          echo "checksum=${archive}.sha256" >> "$GITHUB_OUTPUT"
+
+      - name: Keep build artifact for review
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.id }}
+          path: |
+            ${{ steps.package.outputs.archive }}
+            ${{ steps.package.outputs.checksum }}
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload immutable release assets
+        if: github.event_name == 'release' || inputs.publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.event.release.tag_name || inputs.release_tag }}
+          ARCHIVE: ${{ steps.package.outputs.archive }}
+          CHECKSUM: ${{ steps.package.outputs.checksum }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release view "$RELEASE_TAG" >/dev/null
+          existing="$(gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name')"
+          for asset in "$ARCHIVE" "$CHECKSUM"; do
+            if grep -Fqx "$asset" <<<"$existing"; then
+              echo "refusing to overwrite existing release asset: $asset" >&2
+              exit 1
+            fi
+          done
+          gh release upload "$RELEASE_TAG" "$ARCHIVE" "$CHECKSUM"

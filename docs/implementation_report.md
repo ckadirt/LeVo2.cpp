@@ -458,3 +458,34 @@ Flow window checkpointing, VAE pause, and CLI flags remain pending.
   test registration. The asset-free test set is intentionally fast; the
   real-model smoke results and remaining release-matrix gates above are the
   applicable evidence for the new staged ABI.
+
+### Release-automation implementation trace
+
+- Added `.github/workflows/release.yml`, modeled on the established ACE-Step
+  binary release pattern but scoped to the verified Linux x86_64 CPU and CUDA
+  12 matrix. It checks out the release tag recursively, builds portable dynamic
+  GGML CPU variants, runs required CPU/non-GPU tests, and keeps build archives
+  as Actions artifacts before release publication.
+- Dynamic GGML builds move direct CPU symbols out of `libggml`; white-box tests
+  that intentionally invoke that API now link the portable x64 CPU plugin only
+  for that configuration. This is test-only wiring: shipped tools still load
+  the highest-scoring compatible backend beside the executable at runtime.
+- The archive stages GGML's loadable backends next to the executables and its
+  core libraries plus `liblevo-cantor-engine` in `lib/`. Relative rpaths make
+  the archive relocatable without `LD_LIBRARY_PATH`; its stage smoke executes
+  the CPU backend rather than merely printing help.
+- Release attachments are deliberately immutable. The workflow computes a
+  SHA-256 sidecar and rejects a tag that already owns either asset name. This
+  differs from the ACE-Step workflow's `--clobber` convention because a binary
+  rerun must not silently alter an announced artifact. macOS/Windows and
+  Vulkan packages are deferred until they have a tested, platform-specific
+  runtime and smoke matrix; this is a release-scope limitation, not an
+  unverified portability claim.
+- Validation on 2026-08-13: a clean Linux Release build with
+  `GGML_BACKEND_DL=ON`, `GGML_CPU_ALL_VARIANTS=ON`, and
+  `GGML_NATIVE=OFF` passed **26/26** CTest cases. A freshly staged, relocated
+  CPU archive loaded `libggml-cpu-haswell.so` from its own `bin/`, completed
+  `levo-cli --smoke cpu`, passed all tool-help checks with
+  `LD_LIBRARY_PATH` removed, and verified its SHA-256 sidecar. The resulting
+  local test archive was 7.4 MiB with fourteen CPU backend modules. Hosted
+  CUDA workflow execution remains the publication gate for the CUDA archive.
