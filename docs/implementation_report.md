@@ -281,3 +281,44 @@ liveness between those boundaries; byte-level loader progress and per-operator
 VAE progress are not fabricated. Cooperative cancellation likewise takes
 effect at the next safe boundary and cannot interrupt a GGML graph already in
 flight. These are the explicit granularity limits of this milestone.
+
+## Post-observability resumability planning audit
+
+On 2026-08-13, the current cancellation paths were audited against the local
+ACE-Step staged-engine implementation (`acestep.cpp` commit `79994ed`, staged
+engine merge `7985032`). LeVo2.cpp was at clean pushed commit `12a1253` when the
+audit began.
+
+The audit confirms that current `main` is not resumable. LeLM cancellation
+destroys the partial delayed sequence, sampler/EOS state, and paired K/V caches;
+Flow cancellation destroys the current Euler tensor and completed latent
+windows; VAE cancellation destroys decoded windows. The CLIs correctly avoid
+partial artifacts, but no cross-process checkpoint exists.
+
+The proposed contract and implementation order are frozen in
+`docs/resumability-plan.md`. The principal design findings are:
+
+- LeLM should checkpoint its small delayed token stream, resolved seed, and RNG
+  draw cursor, then rebuild K/V with the exact sequential graph shape. The
+  existing combined prefill is deliberately not used because prior parity work
+  proved graph-boundary numerical differences can flip near-tied logits.
+- Flow should checkpoint exact initial noise, completed denormalized windows,
+  the current normalized Euler state, and `(window,step)`. Fixed-step Euler and
+  LeVo's direct CFG expression have no hidden cross-step history.
+- The durable Flow-to-VAE boundary must retain overlapping 1000-frame latent
+  windows; an assembled raw `[T,64]` tensor cannot reproduce the official
+  decode-then-crossfade path.
+- VAE can initially pause with no new blob and rerun from the completed Flow
+  boundary, but the measured CPU graph duration requires abort-callback and/or
+  chunking work before the 20-second host shutdown guarantee can be claimed.
+- A Cantor-compatible C ABI, self-identifying checked blobs, strict
+  backend/model/numerical stamps, thread-local errors, exception guards, and
+  context re-entry tests are part of the milestone rather than follow-up work.
+
+Intentional differences from ACE-Step are recorded in the plan: LeVo has no
+`PLAN` stage; its stateless Flow CFG remains resumable above 1.0; completed Flow
+state is windowed; exact Flow noise is persisted to avoid Box-Muller/libm drift;
+and the local GGML CPU abort callback will be evaluated for long graph latency.
+
+This planning change does not alter inference code, formats, tests, or release
+artifacts. Implementation and validation have not started.

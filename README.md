@@ -183,6 +183,10 @@ does not instantiate upstream Python model code.
 See [the execution plan](docs/plan.md), [architecture contract](docs/architecture.md),
 [parity policy](docs/parity.md), and [implementation report](docs/implementation_report.md).
 
+Cross-process pause/resume is not implemented on the current release. Its
+staged-engine contract, checkpoint contents, determinism rules, and validation
+gates are defined in the [resumability plan](docs/resumability-plan.md).
+
 The native renderer has its own
 [execution plan](docs/renderer-plan.md),
 [architecture contract](docs/renderer-architecture.md),
