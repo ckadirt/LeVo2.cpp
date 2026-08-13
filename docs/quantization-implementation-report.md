@@ -228,6 +228,24 @@ loudly rather than silently changing a waveform.
   the first Hugging Face publication transaction. The model-card update and
   anonymous remote checksum verification are the remaining gates.
 
+### 2026-08-13 — Hugging Face catalog publication and public verification
+
+- Published the eight validated GGUFs, each with its checksum and manifest, to
+  public `ckadirt/LeVo2-GGUF` without replacing any existing filename. Profile
+  commits are Q8_0 `a88cebea69d4d5df1edfc61260175963612d641f`, Q6_K
+  `4524d684da3a6fbaa187109d5b7f6c7fbd117621`, Q5_K_M
+  `0a1662e0d41e78dc97cce74867aa39453106b52f`, and Q4_K_M
+  `ef9f0738a04df39a98782bcece3ef288b8780707`.
+- Published the model card and public validation matrix in
+  `b97bb0df7fef177200acddcfbd5339b545b835ea`. The card explains the mixed
+  policies, the Q6_K recommendation for the measured Flow cell, and that no
+  low-bit variant is bit-identical to the F16/F32 baselines.
+- Performed a no-credential remote audit of every new variant: downloaded its
+  checksum and manifest, read its public Hub LFS identity, and checked SHA-256
+  plus byte count against the staged local artifact. All eight passed. This
+  validates the public remote objects without treating an authenticated upload
+  response as verification evidence.
+
 ## Deviations
 
 None so far.

@@ -6,6 +6,17 @@
     "backend": "RTX 4090 / CUDA0",
     "policy_revision": "1"
   },
+  "publication": {
+    "repository": "ckadirt/LeVo2-GGUF",
+    "profile_commits": {
+      "Q8_0": "a88cebea69d4d5df1edfc61260175963612d641f",
+      "Q6_K": "4524d684da3a6fbaa187109d5b7f6c7fbd117621",
+      "Q5_K_M": "0a1662e0d41e78dc97cce74867aa39453106b52f",
+      "Q4_K_M": "ef9f0738a04df39a98782bcece3ef288b8780707"
+    },
+    "documentation_commit": "b97bb0df7fef177200acddcfbd5339b545b835ea",
+    "public_verification": "Downloaded public sidecars/manifests and public Hub LFS SHA-256/byte metadata matched every local artifact."
+  },
   "lelm": {
     "fixture": {
       "lyrics": "artifacts/dance-with-me/lyrics-en.txt",
