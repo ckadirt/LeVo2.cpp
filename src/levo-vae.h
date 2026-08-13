@@ -1,5 +1,6 @@
 #pragma once
 
+#include "levo.h"
 #include "levo-vae-model.h"
 
 #include <cstddef>
@@ -32,7 +33,8 @@ public:
     // F16 execution is introduced only after its independent parity gate.
     [[nodiscard]] vae_decode_result decode(const std::vector<float> & latent,
                                            std::size_t frames,
-                                           bool capture_stages = false) const;
+                                           bool capture_stages = false,
+                                           const cancellation_callback & cancelled = {}) const;
 
 private:
     explicit vae_decoder(std::shared_ptr<const vae_model> model);

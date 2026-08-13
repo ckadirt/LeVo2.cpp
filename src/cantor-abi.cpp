@@ -8,6 +8,7 @@
 #include "levo-generator.h"
 #include "levo-renderer-pattern.h"
 #include "levo-token-io.h"
+#include "levo-vae.h"
 
 #include "ggml-backend.h"
 
@@ -764,6 +765,112 @@ cantor_status run_flow(cantor_ctx * context, const std::uint8_t * input, std::si
     return CANTOR_DONE;
 }
 
+std::vector<float> channel_major_latent(const std::vector<float> & frame_major,
+                                        std::size_t frames, std::size_t latent_dim) {
+    if (frame_major.size() != frames * latent_dim) throw std::runtime_error("VAE latent window has an unexpected shape");
+    std::vector<float> result(frame_major.size());
+    for (std::size_t frame = 0; frame < frames; ++frame) {
+        for (std::size_t channel = 0; channel < latent_dim; ++channel) {
+            result[channel * frames + frame] = frame_major[frame * latent_dim + channel];
+        }
+    }
+    return result;
+}
+
+levo::renderer_stereo_audio stereo_from_vae(const levo::detail::vae_decode_result & decoded) {
+    if (decoded.samples_per_channel == 0 || decoded.audio.size() != 2U * decoded.samples_per_channel) {
+        throw std::runtime_error("VAE decoder returned an unexpected stereo payload");
+    }
+    levo::renderer_stereo_audio result;
+    result.left.assign(decoded.audio.begin(), decoded.audio.begin() + static_cast<std::ptrdiff_t>(decoded.samples_per_channel));
+    result.right.assign(decoded.audio.begin() + static_cast<std::ptrdiff_t>(decoded.samples_per_channel), decoded.audio.end());
+    return result;
+}
+
+cantor_status pause_decode_boundary() {
+    set_error(CANTOR_ERR_CANCEL, "[LeVo ABI] DECODE paused; retrying from the durable Flow boundary");
+    return CANTOR_PAUSED;
+}
+
+cantor_status run_decode(cantor_ctx * context, const std::uint8_t * input, std::size_t input_size,
+                         cantor_progress_fn progress, cantor_cancel_fn should_cancel, void * userdata) {
+    if (context->vae_path.empty()) {
+        set_error(CANTOR_ERR_MODEL, "[LeVo ABI] DECODE requires a vae component");
+        return CANTOR_ERR;
+    }
+    if (input_size <= latent_magic.size() ||
+        !std::equal(latent_magic.begin(), latent_magic.end(), reinterpret_cast<const char *>(input))) {
+        throw std::runtime_error("DECODE expects a completed LEVOLT01 Flow boundary");
+    }
+    const auto blob = levo::checkpoint::decode(input, input_size, latent_magic);
+    if (blob.stage != CANTOR_STAGE_DIFFUSE || blob.sections.size() != 4U) {
+        throw std::runtime_error("completed Flow boundary has an unexpected stage or section set");
+    }
+    const auto & request_section = required_section(blob, levo::checkpoint::section_kind::request_json);
+    const std::string canonical_request(reinterpret_cast<const char *>(request_section.bytes.data()), request_section.bytes.size());
+    const levo::engine_request::request request = levo::engine_request::parse(canonical_request);
+    if (!request.seed_present) throw std::runtime_error("completed Flow request does not contain a resolved LeLM seed");
+    const std::vector<std::int32_t> tokens = delayed_as_tokens(
+        decode_delayed(required_section(blob, levo::checkpoint::section_kind::delayed_tokens_i32).bytes));
+    if (tokens.empty() || tokens.size() % 3U != 0) throw std::runtime_error("completed Flow tokens are not [3,T]");
+    const std::size_t frame_count = tokens.size() / 3U;
+    const levo::renderer_schedule schedule = levo::make_renderer_schedule(frame_count);
+    const flow_metadata metadata = decode_flow_metadata(required_section(blob, levo::checkpoint::section_kind::metadata).bytes);
+    if (metadata.active_window || metadata.completed_windows != metadata.window_count ||
+        metadata.source_frames != frame_count || metadata.padded_frames != schedule.padded_frames ||
+        metadata.window_count != schedule.windows.size() ||
+        metadata.stamp.token_sha256 != levo::token_io::tensor_sha256(tokens)) {
+        throw std::runtime_error("completed Flow boundary does not match its embedded CODES input");
+    }
+    if (cancelled(should_cancel, userdata)) return pause_decode_boundary();
+
+    ggml_backend_dev_t device = select_engine_device();
+    levo::detail::configure_cuda_gemm_f32_accumulation(device);
+    levo::detail::configure_cuda_disable_tf32(device);
+    backend_ptr backend(ggml_backend_dev_init(device, nullptr));
+    if (!backend) throw std::runtime_error("cannot initialize VAE backend");
+    const std::shared_ptr<levo::detail::vae_model> model = levo::detail::vae_model::load_gguf(
+        context->vae_path, {backend.get(), true, false, true});
+    const levo::detail::vae_hparams & hp = model->hparams();
+    if (hp.sample_rate != static_cast<int32_t>(levo::renderer_sample_rate) || hp.audio_channels != 2 ||
+        hp.latent_dim != 64 || hp.downsampling_ratio != static_cast<int32_t>(levo::renderer_samples_per_frame)) {
+        throw std::runtime_error("VAE GGUF does not match the native Flow renderer contract");
+    }
+    const std::size_t per_window = static_cast<std::size_t>(levo::renderer_window_frames) *
+                                   static_cast<std::size_t>(hp.latent_dim);
+    const std::vector<levo::flow::latent_window> windows = decode_completed_flow_windows(
+        required_section(blob, levo::checkpoint::section_kind::completed_latents_f32).bytes,
+        metadata.completed_windows, per_window, static_cast<std::size_t>(levo::renderer_hop_frames));
+    if (cancelled(should_cancel, userdata)) return pause_decode_boundary();
+    std::unique_ptr<levo::detail::vae_decoder> decoder = levo::detail::vae_decoder::create(model);
+    std::vector<levo::renderer_stereo_audio> decoded;
+    decoded.reserve(windows.size());
+    for (std::size_t index = 0; index < windows.size(); ++index) {
+        if (cancelled(should_cancel, userdata)) return pause_decode_boundary();
+        const std::vector<float> latent = channel_major_latent(windows[index].denormalized_latents,
+            static_cast<std::size_t>(levo::renderer_window_frames), static_cast<std::size_t>(hp.latent_dim));
+        try {
+            decoded.push_back(stereo_from_vae(decoder->decode(
+                latent, levo::renderer_window_frames, false,
+                [should_cancel, userdata] { return cancelled(should_cancel, userdata); })));
+        } catch (const levo::operation_cancelled &) {
+            return pause_decode_boundary();
+        }
+        emit_progress(progress, userdata, CANTOR_STAGE_DECODE, index + 1U, windows.size());
+    }
+    if (cancelled(should_cancel, userdata)) return pause_decode_boundary();
+    const levo::renderer_stereo_audio stereo = levo::assemble_renderer_audio(schedule, decoded);
+    if (stereo.left.size() != stereo.right.size() || stereo.left.size() > static_cast<std::size_t>(std::numeric_limits<int>::max())) {
+        throw std::runtime_error("decoded audio has an invalid sample count");
+    }
+    context->audio.clear();
+    context->audio.reserve(stereo.left.size() * 2U);
+    context->audio.insert(context->audio.end(), stereo.left.begin(), stereo.left.end());
+    context->audio.insert(context->audio.end(), stereo.right.begin(), stereo.right.end());
+    context->audio_samples = static_cast<int>(stereo.left.size());
+    return CANTOR_DONE;
+}
+
 } // namespace
 
 extern "C" {
@@ -785,7 +892,7 @@ const char * cantor_engine_version(void) {
 }
 
 uint32_t cantor_engine_stages(void) {
-    return (1U << CANTOR_STAGE_CODES) | (1U << CANTOR_STAGE_DIFFUSE);
+    return (1U << CANTOR_STAGE_CODES) | (1U << CANTOR_STAGE_DIFFUSE) | (1U << CANTOR_STAGE_DECODE);
 }
 
 cantor_error cantor_engine_last_error_code(void) {
@@ -860,14 +967,18 @@ cantor_status cantor_engine_run_stage(cantor_ctx * context, cantor_stage stage,
     *output_size = 0;
     context->audio.clear();
     context->audio_samples = 0;
-    if (stage != CANTOR_STAGE_CODES && stage != CANTOR_STAGE_DIFFUSE) {
+    if (stage != CANTOR_STAGE_CODES && stage != CANTOR_STAGE_DIFFUSE && stage != CANTOR_STAGE_DECODE) {
         set_error(CANTOR_ERR_OTHER, "[LeVo ABI] requested stage is not implemented");
         return CANTOR_ERR;
     }
     return guard([&] {
-        return stage == CANTOR_STAGE_CODES
-            ? run_codes(context, state_in, input_size, state_out, output_size, progress, should_cancel, userdata)
-            : run_flow(context, state_in, input_size, state_out, output_size, progress, should_cancel, userdata);
+        if (stage == CANTOR_STAGE_CODES) {
+            return run_codes(context, state_in, input_size, state_out, output_size, progress, should_cancel, userdata);
+        }
+        if (stage == CANTOR_STAGE_DIFFUSE) {
+            return run_flow(context, state_in, input_size, state_out, output_size, progress, should_cancel, userdata);
+        }
+        return run_decode(context, state_in, input_size, progress, should_cancel, userdata);
     });
 }
 

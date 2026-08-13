@@ -185,9 +185,10 @@ See [the execution plan](docs/plan.md), [architecture contract](docs/architectur
 
 The shared Cantor engine currently supports cross-process pause/resume for
 LeLM `CODES` and Flow `DIFFUSE`: it writes self-contained token or latent
-checkpoints rather than model/KV state. VAE and CLI checkpoint adapters are
-still pending. The full staged contract, determinism rules, and remaining
-validation gates are in the [resumability plan](docs/resumability-plan.md).
+checkpoints rather than model/KV state. Its VAE `DECODE` stage retries from the
+durable Flow boundary if stopped; CLI checkpoint adapters are still pending.
+The full staged contract, determinism rules, and remaining validation gates are
+in the [resumability plan](docs/resumability-plan.md).
 
 The native renderer has its own
 [execution plan](docs/renderer-plan.md),

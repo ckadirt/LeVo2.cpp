@@ -440,7 +440,7 @@ render_result render_tokens_to_audio(const render_config & config,
             const flow::latent_window & window = latents.windows[index];
             const std::vector<float> input = channel_major_latent(window.denormalized_latents,
                 renderer_window_frames, static_cast<std::size_t>(hp.latent_dim));
-            decoded_windows.push_back(stereo_from_vae(decoder->decode(input, renderer_window_frames)));
+            decoded_windows.push_back(stereo_from_vae(decoder->decode(input, renderer_window_frames, false, config.cancelled)));
             reporter.update(index + 1U, latents.windows.size(), index + 1U);
         }
         timings.vae_seconds = elapsed_seconds(vae_started);

@@ -8,8 +8,9 @@ the shared engine now advertises `CANTOR_STAGE_CODES` and
 delayed IDs, sampler cursor, redundant EOS state, next-logit digest, and strict
 model/backend stamps; it rebuilds K/V sequentially on resume. `LEVOFL01`
 records exact Flow noise, completed raw windows, and an active Euler tensor;
-`LEVOLT01` is the durable completed-Flow boundary. VAE and CLI checkpoint
-adapters are not wired yet.
+`LEVOLT01` is the durable completed-Flow boundary. `DECODE` consumes that
+boundary, returns planar audio, and pauses without a replacement blob; CLI
+checkpoint adapters are not wired yet.
 
 This plan was prepared from the current LeVo2.cpp `main` at commit `12a1253`
 and the local ACE-Step reference at commit `79994ed` (whose staged-engine merge
@@ -20,8 +21,8 @@ LeVo before implementation starts.
 ## Current behavior
 
 The ordinary C++/CLI generation/render path is **not resumable today**. The
-Cantor engine's `CODES` and `DIFFUSE` stages are resumable; `DECODE` remains
-unavailable.
+Cantor engine's `CODES` and `DIFFUSE` stages are resumable; `DECODE` is a
+durable-boundary retry stage rather than a partial-PCM checkpoint stage.
 
 - The blocking `generate_tokens()` API still turns a cancellation into
   `operation_cancelled`. The staged CODES API instead preserves the delayed
@@ -30,8 +31,10 @@ unavailable.
 - The ordinary Flow renderer still throws on cancellation. The staged DIFFUSE
   path persists exact noise, each completed raw window, and the post-update
   normalized Euler state, then reconstructs conditioning from those bytes.
-- VAE polls only between complete 1000-frame window graphs. A cancellation
-  discards every decoded window.
+- The staged VAE path polls before each complete window and uses GGML's
+  dynamically discovered CPU abort callback where supplied by the backend. It
+  returns `PAUSED` with a null blob, instructing the host to retry the durable
+  completed Flow input rather than persisting partial PCM.
 - The CLIs exit with status 130 and intentionally write neither partial tokens
   nor a WAV. There is no state-blob API, resume sniffing, or stable C ABI.
 

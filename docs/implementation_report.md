@@ -393,3 +393,21 @@ Flow window checkpointing, VAE pause, and CLI flags remain pending.
   boundary and the stage discovery/strict JSON paths. A real-model DIFFUSE
   pause/resume parity run remains pending; it is deliberately not claimed by
   this source-level milestone.
+
+### Resumability implementation trace: DECODE stage
+
+- `CANTOR_STAGE_DECODE` consumes only a checked completed `LEVOLT01` Flow
+  boundary. It validates embedded request/codes/schedule/token digest and VAE
+  geometry, decodes the retained overlapping raw windows, performs the normal
+  crossfade/crop, and exposes planar stereo samples through
+  `cantor_engine_audio`.
+- A stop before/between VAE windows returns `CANTOR_PAUSED` with a null output
+  blob and `CANTOR_ERR_CANCEL`. This deliberately asks the host to reuse its
+  already durable DIFFUSE completion; there is no partial-PCM state to corrupt
+  or resume incorrectly.
+- `vae_decoder` now dynamically obtains `ggml_backend_set_abort_callback` from
+  the selected backend registry. CPU graph compute can therefore observe the
+  cancellation predicate inside a window and translates `GGML_STATUS_ABORTED`
+  to the normal pause path. Backends without that hook observe cancellation as
+  soon as their graph ends. Exact CPU/CUDA callback-latency measurements remain
+  pending, so the 15-second target is not yet claimed.

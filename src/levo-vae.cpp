@@ -104,6 +104,48 @@ std::vector<float> read_f32(ggml_tensor * tensor) {
     return values;
 }
 
+struct abort_state {
+    const cancellation_callback * cancelled = nullptr;
+    bool observed = false;
+};
+
+bool should_abort(void * userdata) {
+    auto * state = static_cast<abort_state *>(userdata);
+    if (state != nullptr && state->cancelled != nullptr && *state->cancelled && (*state->cancelled)()) {
+        state->observed = true;
+        return true;
+    }
+    return false;
+}
+
+class backend_abort_guard final {
+public:
+    backend_abort_guard(ggml_backend_t backend, abort_state * state) {
+        if (backend == nullptr || state == nullptr || state->cancelled == nullptr || !*state->cancelled) return;
+        const ggml_backend_dev_t device = ggml_backend_get_device(backend);
+        const ggml_backend_reg_t registry = device ? ggml_backend_dev_backend_reg(device) : nullptr;
+        if (registry == nullptr) return;
+        setter_ = reinterpret_cast<ggml_backend_set_abort_callback_t>(
+            ggml_backend_reg_get_proc_address(registry, "ggml_backend_set_abort_callback"));
+        if (setter_ != nullptr) setter_(backend, should_abort, state);
+        backend_ = setter_ ? backend : nullptr;
+    }
+
+    backend_abort_guard(const backend_abort_guard &) = delete;
+    backend_abort_guard & operator=(const backend_abort_guard &) = delete;
+
+    ~backend_abort_guard() { clear(); }
+
+    void clear() noexcept {
+        if (setter_ != nullptr && backend_ != nullptr) setter_(backend_, nullptr, nullptr);
+        backend_ = nullptr;
+    }
+
+private:
+    ggml_backend_t backend_ = nullptr;
+    ggml_backend_set_abort_callback_t setter_ = nullptr;
+};
+
 } // namespace
 
 struct vae_decoder::impl {
@@ -127,7 +169,8 @@ std::unique_ptr<vae_decoder> vae_decoder::create(std::shared_ptr<const vae_model
 
 vae_decode_result vae_decoder::decode(const std::vector<float> & latent,
                                       std::size_t frames,
-                                      bool capture_stages) const {
+                                      bool capture_stages,
+                                      const cancellation_callback & cancelled) const {
     const vae_hparams & hparams = impl_->weights->hparams();
     if (frames == 0 || frames > static_cast<std::size_t>(std::numeric_limits<int64_t>::max())) {
         fail("latent frame count must be positive and representable");
@@ -200,7 +243,14 @@ vae_decode_result vae_decoder::decode(const std::vector<float> & latent,
         fail("cannot allocate VAE computation graph");
     }
     ggml_backend_tensor_set(input, latent.data(), 0, latent.size() * sizeof(float));
+    abort_state abort{&cancelled, false};
+    backend_abort_guard abort_guard(impl_->weights->backend(), &abort);
     const ggml_status status = ggml_backend_graph_compute(impl_->weights->backend(), graph);
+    abort_guard.clear();
+    if (status == GGML_STATUS_ABORTED && abort.observed) throw operation_cancelled();
+    // Backends without an interrupt hook (notably CUDA in the current GGML
+    // configuration) still honour a stop immediately after their graph ends.
+    if (cancelled && cancelled()) throw operation_cancelled();
     if (status != GGML_STATUS_SUCCESS) {
         fail(std::string("GGML graph execution failed: ") + ggml_status_to_string(status));
     }
