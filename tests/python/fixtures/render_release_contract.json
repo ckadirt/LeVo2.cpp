@@ -1,0 +1,49 @@
+{
+  "format": "levo2-render-release-fixtures-v1",
+  "generator": {
+    "version": "0.2.0",
+    "model_filename": "LeVo2-v2-medium-F16.gguf",
+    "model_sha256": "b765d0e79f17cf05c0acdc6cef8bfcd072104adfd8357bb0470f5b9ae91d9e64",
+    "backend": "CUDA0",
+    "lyrics": "[verse] Hello world.",
+    "lyrics_sha256": "22412a8f0cd53c3fe913c3d1fd49e85cabc0336d9fb46074a02d2f0fa74b7649",
+    "description": "female, pop",
+    "description_sha256": "901a4c453948b4f0e638c050489113283ff31164354c083adcb654255e6583c0",
+    "cfg_scale": 1.5
+  },
+  "fixtures": [
+    {
+      "filename": "tokens-2s.npy",
+      "frames": 50,
+      "mode": "greedy",
+      "seed": 1234,
+      "npy_sha256": "14cdd85dd4aa078d34ca53e02d92c885c9530d25bcf4e022a3016dded8b76185",
+      "tensor_sha256": "f57268812d4befe556a2b8ee54afae70b657c997616f3b959d7fc5add7ef737a"
+    },
+    {
+      "filename": "tokens-10.08s.npy",
+      "frames": 252,
+      "mode": "greedy",
+      "seed": 1234,
+      "npy_sha256": "052382f7969326465c8f8b1e771120c51b3363158b0152199eff071ac92d55f7",
+      "tensor_sha256": "98c1b74c79e629fcf0b7ddda74d13f8d2da19cadbb326fd6273196fb9846d7aa"
+    },
+    {
+      "filename": "tokens-30s.npy",
+      "frames": 750,
+      "mode": "sampled",
+      "seed": 1235,
+      "npy_sha256": "d76ee215ebda87c35f0040cf6c9890b8b3517a67e5bdb6f8cd76b503d6bbc5a8",
+      "tensor_sha256": "5dec3fcd000630e528c29480287efeea736a8b498c9d84f136ef9cde452e1169"
+    },
+    {
+      "filename": "tokens-50s.npy",
+      "frames": 1250,
+      "mode": "derived-repeat",
+      "source": "tokens-30s.npy",
+      "derivation": "tile the [3,750] source along frames and crop to [3,1250]",
+      "npy_sha256": "0806b928ae2d4e1e1ce95a5b85c612b2f992c89e527e3e2bd9da15a601c73a42",
+      "tensor_sha256": "3cd9418e86557cf99af239ffdf7b0f43754a4561efc0e84dbb31e2a2ac8ac196"
+    }
+  ]
+}

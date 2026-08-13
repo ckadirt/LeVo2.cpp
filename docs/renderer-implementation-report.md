@@ -161,3 +161,19 @@ pushed before the next long-running step.
   `26f9ea955f586ed3d7668fe345a851ba222b8db95b406e3eea3c9565f4a0b515`.
   Their checksum sidecars, manifests, parameter/tensor counts, and strict
   CPU/CUDA loaders pass. The focused converter suite is 8/8.
+- The renderer fixture contract is now tracked while raw token arrays remain
+  ignored. The exact prompt has no trailing newline. The 50-frame greedy
+  tensor reproduces its historical SHA-256 exactly. On the CUDA 13.2 host the
+  freshly generated 252-frame greedy tensor differs from the v0.1 hash after
+  the short boundary; it is frozen under its measured hash for renderer input
+  coverage rather than represented as renewed LeLM cross-version parity.
+- Sampled seed 1234 reached model EOS at 683 frames. Following the release
+  fixture policy, the first subsequent seed, 1235, completed all 750 frames and
+  is the frozen sampled case. The 1,250-frame overlap case repeats this tensor
+  and crops it to the documented length.
+- The native two-frame Flow estimator gate passes 1/1. The first VAE parity
+  invocation failed before model execution because the recreated Python 3.12
+  environment lacked the legacy `pkg_resources` import used by `clip`.
+  Pinning `setuptools<81` restored that upstream compatibility; the unchanged
+  CUDA F32 VAE stage gate then passed 2/2. No numerical threshold or model code
+  changed.
