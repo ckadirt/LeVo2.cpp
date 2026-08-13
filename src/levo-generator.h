@@ -61,12 +61,15 @@ resumable_generation_result run_generation_controller_resumable(
 
 namespace levo {
 
+using generation_model_ready_callback = std::function<void(const generation_result &)>;
+
 // Internal engine seam: the normal public generator remains blocking, while
 // the Cantor ABI uses this result to turn a cooperative cancellation into a
 // serializable delayed-token checkpoint.
 detail::resumable_generation_result generate_tokens_resumable(
     const generation_config & config,
     const detail::generation_resume_state * resume = nullptr,
-    generation_progress_callback progress = {});
+    generation_progress_callback progress = {},
+    generation_model_ready_callback model_ready = {});
 
 } // namespace levo

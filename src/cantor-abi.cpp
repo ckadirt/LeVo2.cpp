@@ -493,9 +493,12 @@ cantor_status run_codes(cantor_ctx * context, const std::uint8_t * input, std::s
     const auto report = [progress, userdata](const levo::generation_progress & value) {
         emit_progress(progress, userdata, CANTOR_STAGE_CODES, value.completed_steps, value.total_steps);
     };
+    const levo::generation_model_ready_callback verify_resume_stamp = [resuming, &expected_stamp](
+        const levo::generation_result & model_stamp) {
+        if (resuming) validate_stamp(expected_stamp, model_stamp);
+    };
     levo::detail::resumable_generation_result result = levo::generate_tokens_resumable(
-        config, resuming ? &resume_state : nullptr, report);
-    if (resuming) validate_stamp(expected_stamp, result.result);
+        config, resuming ? &resume_state : nullptr, report, verify_resume_stamp);
 
     if (result.paused) {
         const lm_stamp stamp = stamp_from_result(result.result);

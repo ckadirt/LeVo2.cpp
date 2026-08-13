@@ -392,7 +392,8 @@ generation_result run_generation_controller(
 detail::resumable_generation_result generate_tokens_resumable(
     const generation_config & config,
     const detail::generation_resume_state * resume,
-    generation_progress_callback progress) {
+    generation_progress_callback progress,
+    generation_model_ready_callback model_ready) {
     if (config.model_path.empty()) {
         throw std::invalid_argument("a GGUF model path is required");
     }
@@ -447,6 +448,14 @@ detail::resumable_generation_result generate_tokens_resumable(
         value.tokenizer_revision = model->provenance().tokenizer_revision;
         value.tokenizer_sha256 = model->provenance().tokenizer_sha256;
     };
+    // A resume must reject a different model/backend before it derives any
+    // conditioning, rebuilds K/V, or samples a token. The caller supplies the
+    // expected stamp from its self-contained checkpoint.
+    if (model_ready) {
+        generation_result model_stamp;
+        stamp_provenance(model_stamp);
+        model_ready(model_stamp);
+    }
 
     begin_stage(generation_stage::preparing_conditioning);
     const ByteLevelBPETokenizer tokenizer = ByteLevelBPETokenizer::load_embedded(

@@ -358,9 +358,11 @@ Flow window checkpointing, VAE pause, and CLI flags remain pending.
   state, a SHA-256 digest of the rebuilt next logits, and backend/model/runtime/
   tokenizer stamps. K/V is never serialized.
 - Resume recreates the ordinary split prefill and replay-decodes each saved
-  delayed position before comparing the logit digest and continuing. A stop
-  while replaying returns the original logical checkpoint, so the durable
-  boundary is never weakened by a partial K/V rebuild.
+  delayed position before comparing the logit digest and continuing. The
+  backend/model/runtime/tokenizer stamp is checked immediately after model
+  load, before conditioning or K/V replay. A stop while replaying returns the
+  original logical checkpoint, so the durable boundary is never weakened by a
+  partial K/V rebuild.
 - The request decoder deliberately differs from the original `yyjson` plan: a
   small strict decoder was implemented for the fixed schema, with duplicate and
   unknown-field rejection, UTF-8 validation, JSON-number grammar validation,
