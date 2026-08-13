@@ -192,3 +192,15 @@ upstream input defect, not a C++ behavior change.
 - Audio prompt encoding, native audio rendering, quantization, stable C ABI, and
   mobile integration are intentionally deferred.
 - The official Python decoder remains required for WAV output in v0.1.
+
+## Post-v0.1 native-renderer addendum
+
+This report is the immutable historical record of the `v0.1.0` token-generator
+release. The statement above remains correct for that tag, but not for current
+`main`: v0.2 adds a fully native C++/GGML Flow and Oobleck VAE renderer.
+
+The renderer implementation history, release deviations, full eight-case
+Python/C++ parity matrix, performance, and WAV evidence are maintained in
+`docs/renderer-implementation-report.md` and
+`docs/renderer-release-matrix.json`. The v0.1 LeLM F16 GGUF is unchanged and is
+the token-generation half of the v0.2 end-to-end pipeline.

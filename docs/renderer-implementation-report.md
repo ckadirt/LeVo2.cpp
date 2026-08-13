@@ -2,10 +2,10 @@
 
 ## Status
 
-The native renderer implementation is feature-complete. Final v0.2 release
-validation is in progress; the eight-case full-window matrix is not considered
-accepted until measured reports are recorded below. Token-to-WAV rendering
-runs entirely in C++/GGML: dual RVQ conditioning, the 16-block Flow velocity transformer,
+The native renderer is complete and release-gated. The eight-case full-window
+matrix and the public lyrics-to-WAV smoke pass with measured evidence below.
+Token-to-WAV rendering runs entirely in C++/GGML: dual RVQ conditioning, the
+16-block Flow velocity transformer,
 classifier-free guidance, uniform Euler integration, 1000/750/250 window
 continuation, the five-stage Oobleck decoder, crossfade assembly, and the F32
 WAV writer. The earlier WIP assertion that all release cases passed was not
@@ -66,6 +66,13 @@ work:
 | `251017c` | Flow estimator | Complete F32 16-block velocity transformer |
 | `a1de25f` | Flow parity | Two-frame official operator/velocity gate |
 | `e66026d` | Flow renderer | CFG, Euler integration, and continuation windows |
+| `43016ad` | Public renderer | Native token-to-WAV API and CLI |
+| `b49acd2` | Renderer oracle | Deterministic full-window Python exporter |
+| `b5a571a` | End-to-end gate | Production-path native parity tool |
+| `5c865ff` | True F32 gate | Disabled implicit TF32 on both oracle and native paths |
+| `aa46deb` | Release harness | v0.2 version and structured timing/memory reports |
+| `5e1f47c` | Release fixtures | Reproducible four-case input contract |
+| `9538dbd` | Release matrix | Eight passing cases and native 30-second WAV smoke |
 
 The strict Flow converter produced `LeVo2-v2-flow-F32.gguf` with 231 tensors,
 663,310,785 parameters, 2,653,259,456 bytes, and SHA-256
@@ -74,8 +81,7 @@ The strict Flow converter produced `LeVo2-v2-flow-F32.gguf` with 231 tensors,
 The strict VAE converter produced `LeVo2-v2-vae-F32.gguf` with 145 tensors,
 84,395,776 parameters, 337,596,448 bytes, and SHA-256
 `26f9ea955f586ed3d7668fe345a851ba222b8db95b406e3eea3c9565f4a0b515`.
-These hashes identify the current local F32 correctness artifacts; public
-publication remains gated on the native graph parity tests.
+These hashes identify the gated v0.2 F32 release artifacts.
 
 Validated commands include:
 
@@ -128,8 +134,8 @@ AdaLN attention gate; both are now independently covered by the parity tool.
 The Flow renderer layer implements the exact uniform Euler schedule,
 classifier-free branches, sigma-min in-context interpolation and hard restore,
 1000-frame windows, 750-frame hops, and 250-frame continuation context. Its
-asset-free solver/window tests pass. A full 1000-frame one-step and official
-50-step token-to-WAV run remain release gates rather than assumed results.
+asset-free solver/window tests and the full one-step/fifty-step release matrix
+pass.
 
 ## v0.2 release finalization trace
 

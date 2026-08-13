@@ -94,6 +94,17 @@ Both renderer GGUFs are published alongside the LeLM artifact in
 is F32 only: F16 execution is deferred until it passes its own precision gate,
 and F16 artifacts are rejected rather than silently downcast.
 
+Verify the renderer artifacts before loading them:
+
+```bash
+sha256sum -c LeVo2-v2-flow-F32.gguf.sha256
+sha256sum -c LeVo2-v2-vae-F32.gguf.sha256
+```
+
+The expected hashes are `a8cf50dbecef243501b9b345109b1d2f283b3e22f4e4856715197e4b22129d10`
+for Flow and `26f9ea955f586ed3d7668fe345a851ba222b8db95b406e3eea3c9565f4a0b515`
+for VAE.
+
 `--steps 0` and `--cfg 0` select the checkpoint defaults (50 Euler steps,
 guidance 1.5). `--noise-f32` replaces the internal Gaussian draw with an
 explicit window-major `[windows, 1000, 64]` F32 blob, which is the exact
@@ -164,3 +175,8 @@ LEVO_RUN_NATIVE_RENDER_PARITY=1 \
   LEVO_VAE_F32_GGUF=LeVo2-v2-vae-F32.gguf \
   python -m pytest -q tests/python/test_native_render_parity.py
 ```
+
+The committed [v0.2 matrix](docs/renderer-release-matrix.json) covers 50, 252,
+750, and 1,250 frames at both one and fifty Euler steps. It also records a real
+30-second `levo-cli` → `levo-render` smoke: stereo IEEE-F32, 48 kHz, finite,
+non-silent, and exactly 1,440,000 samples per channel.

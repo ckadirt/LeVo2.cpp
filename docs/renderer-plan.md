@@ -1,5 +1,14 @@
 # Native renderer execution plan
 
+## Completion status
+
+Implementation gates 1-9 and the local release gate are complete. The passing
+eight-case matrix, public API smoke, artifact hashes, timings, memory, and
+deviations are recorded in `renderer-implementation-report.md` and
+`renderer-release-matrix.json`. Remote artifact verification and the annotated
+`v0.2.0` tag are the remaining publication actions; their immutable revisions
+are appended to the implementation report after completion.
+
 ## Objective
 
 The next milestone removes Python from the decode half of the v0.1 pipeline:

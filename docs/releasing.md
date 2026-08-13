@@ -41,7 +41,7 @@ The renderer ships two additional artifacts and adds its own gates:
 
 ## Hugging Face
 
-Create public model repository `ckadirt/LeVo2-GGUF` only after the gates pass.
+Use public model repository `ckadirt/LeVo2-GGUF` only after the gates pass.
 Upload, each with its `.sha256` and `.manifest.json` sidecar:
 
 - `LeVo2-v2-medium-F16.gguf` (LeLM)
