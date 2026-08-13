@@ -45,7 +45,8 @@ Cantor relay and deploys the Worker.
   uses `sha256:`-prefixed model digests, and changes only `lm` across tiers.
 - Added a non-blocking local publisher lock after detecting that detached shell
   monitoring could accidentally start a second publication. A second local
-  invocation now fails before it can race an immutable R2 key.
+  invocation now fails before it can race an immutable R2 key; a unit test
+  exercises that exclusion explicitly.
 - **Deviation resolved:** Cloudflare serves the custom domain to ordinary
   clients but rejects or drops Python's stdlib HTTP client. The public verifier
   now invokes `curl` with the explicit `LeVo2-R2-Publisher/1.0` identifier;

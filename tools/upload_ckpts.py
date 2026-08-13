@@ -22,7 +22,7 @@ import subprocess
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any
 
 
 HF_REPO = "ckadirt/LeVo2-GGUF"
@@ -245,7 +245,7 @@ class publication_lock:
         self._path = manifest_path.with_suffix(manifest_path.suffix + ".lock")
         self._file: Any | None = None
 
-    def __enter__(self) -> Iterator[None]:
+    def __enter__(self) -> None:
         self._path.parent.mkdir(parents=True, exist_ok=True)
         self._file = self._path.open("a+", encoding="utf-8")
         try:
@@ -256,7 +256,7 @@ class publication_lock:
             raise PublicationError(
                 f"another LeVo2 R2 publish is already using {self._path}"
             ) from exc
-        return iter(())
+        return None
 
     def __exit__(self, exc_type: Any, exc: Any, traceback: Any) -> None:
         if self._file is not None:
