@@ -7,7 +7,7 @@
 int main(void) {
     assert(cantor_engine_abi_version() == CANTOR_ENGINE_ABI);
     assert(strcmp(cantor_engine_model(), "levo2") == 0);
-    assert(cantor_engine_stages() == 0);
+    assert(cantor_engine_stages() == (1U << CANTOR_STAGE_CODES));
 
     cantor_component component = { "lm", "placeholder.gguf" };
     cantor_ctx * context = cantor_engine_load(&component, 1, NULL);
@@ -19,7 +19,7 @@ int main(void) {
                                    &output, &output_length, NULL, NULL, NULL) == CANTOR_ERR);
     assert(output == NULL && output_length == 0);
     assert(cantor_engine_last_error_code() == CANTOR_ERR_OTHER);
-    assert(strstr(cantor_engine_last_error(), "no stages") != NULL);
+    assert(strstr(cantor_engine_last_error(), "required field") != NULL);
     cantor_engine_free(context);
     return 0;
 }

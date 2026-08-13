@@ -1,6 +1,7 @@
 #include "levo-generator.h"
 
 #include "levo-conditioner.h"
+#include "levo-checkpoint.h"
 #include "levo-kv.h"
 #include "levo-pattern.h"
 #include "levo-token-io.h"
@@ -11,6 +12,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstring>
 #include <cstdlib>
 #include <limits>
 #include <memory>
@@ -172,25 +174,43 @@ std::array<bool, 3> ended_states(const eos_tracker & tracker) {
     return {{tracker.ended(0), tracker.ended(1), tracker.ended(2)}};
 }
 
+std::array<std::uint8_t, 32> digest_logits(const detail::generation_logits & source) {
+    std::size_t count = 0;
+    for (const logits & values : source) {
+        if (values.size() > std::numeric_limits<std::size_t>::max() - count) {
+            fail("logit digest size overflows size_t");
+        }
+        count += values.size();
+    }
+    if (count > std::numeric_limits<std::size_t>::max() / sizeof(float)) {
+        fail("logit digest byte count overflows size_t");
+    }
+    std::vector<std::uint8_t> bytes(count * sizeof(float));
+    std::size_t offset = 0;
+    for (const logits & values : source) {
+        const std::size_t size = values.size() * sizeof(float);
+        if (size != 0) std::memcpy(bytes.data() + offset, values.data(), size);
+        offset += size;
+    }
+    return checkpoint::sha256(bytes.data(), bytes.size());
+}
+
 using progress_clock = std::chrono::steady_clock;
 
 double elapsed_seconds(progress_clock::time_point begin, progress_clock::time_point end = progress_clock::now()) {
     return std::chrono::duration<double>(end - begin).count();
 }
 
-void check_cancelled(const cancellation_callback & cancelled) {
-    if (cancelled && cancelled()) throw operation_cancelled();
-}
-
 } // namespace
 
 namespace detail {
 
-generation_result run_generation_controller(
+resumable_generation_result run_generation_controller_resumable(
     const model_hparams & hparams,
     const generation_config & config,
     generation_logits current_logits,
     generation_advance_callback advance,
+    const generation_resume_state * resume,
     generation_progress_callback progress) {
     if (hparams.codebook_count != 3 || hparams.delays.size() != 3) {
         fail("v0.1 generation requires exactly three delayed codebook streams");
@@ -234,27 +254,72 @@ generation_result run_generation_controller(
     const std::vector<std::vector<int64_t>> placeholder(
         3, std::vector<int64_t>(frames, hparams.special_token_id));
     const pattern_result delayed_mask = delayed.build(placeholder, hparams.special_token_id);
-    std::vector<std::vector<int64_t>> sequence(
-        3, std::vector<int64_t>(1, hparams.special_token_id));
+    std::vector<std::vector<int64_t>> sequence;
     std::random_device entropy;
-    const uint64_t sampler_seed = config.seed_present
+    const uint64_t sampler_seed = resume ? resume->sampler_seed : (config.seed_present
         ? config.seed
-        : (static_cast<uint64_t>(entropy()) << 32U) ^ static_cast<uint64_t>(entropy());
+        : (static_cast<uint64_t>(entropy()) << 32U) ^ static_cast<uint64_t>(entropy()));
     Sampler sampler(sampler_seed);
     const sampling_config sampler_config = to_sampling_config(config.sampling);
     eos_tracker eos(3, hparams.eos_token_id);
     const std::size_t total_steps = delayed.sequence_steps() - 1;
 
+    if (resume) {
+        sequence = resume->delayed_sequence;
+        if (sequence.size() != 3 || sequence.front().empty()) {
+            fail("resume delayed sequence must contain three non-empty streams");
+        }
+        const std::size_t saved_steps = sequence.front().size();
+        if (saved_steps > delayed.sequence_steps()) {
+            fail("resume delayed sequence exceeds the requested pattern length");
+        }
+        for (const auto & stream : sequence) {
+            if (stream.size() != saved_steps || stream.front() != hparams.special_token_id) {
+                fail("resume delayed sequence has an invalid initial special position");
+            }
+            for (const int64_t id : stream) {
+                if (id < 0 || id > hparams.special_token_id) fail("resume delayed sequence contains an invalid token ID");
+            }
+        }
+        for (std::size_t step = 1; step < saved_steps; ++step) {
+            eos.update({sequence[0][step], sequence[1][step], sequence[2][step]});
+        }
+        if (ended_states(eos) != resume->ended || eos.first_ended_length() != resume->earliest_eos) {
+            fail("resume EOS state does not match its delayed sequence");
+        }
+        if (eos.all_ended() || saved_steps == delayed.sequence_steps()) {
+            fail("resume state is already complete and cannot resume generation");
+        }
+        if (digest_logits(current_logits) != resume->next_logits_digest) {
+            fail("resume K/V replay logits do not match the paused backend/model state");
+        }
+        sampler.restore(sampler_seed, resume->sampler_draws);
+    } else {
+        sequence.assign(3, std::vector<int64_t>(1, hparams.special_token_id));
+    }
+
     if (progress) {
         generation_progress value;
         value.stage = generation_stage::generating;
+        value.completed_steps = sequence.front().size() - 1U;
         value.total_steps = total_steps;
         value.requested_frames = frames;
+        value.ended = ended_states(eos);
         progress(value);
     }
 
-    for (std::size_t step = 1; step < delayed.sequence_steps(); ++step) {
-        check_cancelled(config.cancelled);
+    for (std::size_t step = sequence.front().size(); step < delayed.sequence_steps(); ++step) {
+        if (config.cancelled && config.cancelled()) {
+            resumable_generation_result paused;
+            paused.paused = true;
+            paused.resume.delayed_sequence = std::move(sequence);
+            paused.resume.sampler_seed = sampler_seed;
+            paused.resume.sampler_draws = sampler.draw_count();
+            paused.resume.ended = ended_states(eos);
+            paused.resume.earliest_eos = eos.first_ended_length();
+            paused.resume.next_logits_digest = digest_logits(current_logits);
+            return paused;
+        }
         // The upstream order matters: sample every head from the same CFG
         // logits first, then scatter-mask invalid delayed positions. History
         // records those masked special values for the next repetition window.
@@ -297,23 +362,37 @@ generation_result run_generation_controller(
 
     pattern_result reverted = delayed.revert(sequence, hparams.special_token_id);
     const std::size_t trim = trim_length_at_eos(reverted.values, hparams.eos_token_id);
-    generation_result result;
-    result.requested_frames = frames;
-    result.frame_count = trim;
-    result.sequence_steps = sequence.front().size();
-    result.ended = ended_states(eos);
-    result.tokens.reserve(3 * trim);
+    resumable_generation_result result;
+    result.result.requested_frames = frames;
+    result.result.frame_count = trim;
+    result.result.sequence_steps = sequence.front().size();
+    result.result.ended = ended_states(eos);
+    result.result.tokens.reserve(3 * trim);
     for (std::size_t stream = 0; stream < 3; ++stream) {
-        result.tokens.insert(result.tokens.end(), reverted.values[stream].begin(),
-                             reverted.values[stream].begin() + static_cast<std::ptrdiff_t>(trim));
+        result.result.tokens.insert(result.result.tokens.end(), reverted.values[stream].begin(),
+                                    reverted.values[stream].begin() + static_cast<std::ptrdiff_t>(trim));
     }
     return result;
 }
 
+generation_result run_generation_controller(
+    const model_hparams & hparams,
+    const generation_config & config,
+    generation_logits initial_logits,
+    generation_advance_callback advance,
+    generation_progress_callback progress) {
+    resumable_generation_result result = run_generation_controller_resumable(
+        hparams, config, std::move(initial_logits), std::move(advance), nullptr, std::move(progress));
+    if (result.paused) throw operation_cancelled();
+    return std::move(result.result);
+}
+
 } // namespace detail
 
-generation_result generate_tokens(const generation_config & config,
-                                  generation_progress_callback progress) {
+detail::resumable_generation_result generate_tokens_resumable(
+    const generation_config & config,
+    const detail::generation_resume_state * resume,
+    generation_progress_callback progress) {
     if (config.model_path.empty()) {
         throw std::invalid_argument("a GGUF model path is required");
     }
@@ -327,7 +406,6 @@ generation_result generate_tokens(const generation_config & config,
         value.elapsed_seconds = elapsed_seconds(total_started, now);
         value.stage_elapsed_seconds = elapsed_seconds(stage_started, now);
         if (progress) progress(value);
-        check_cancelled(config.cancelled);
     };
     const auto begin_stage = [&](generation_stage stage) {
         current_stage = stage;
@@ -356,6 +434,19 @@ generation_result generate_tokens(const generation_config & config,
     const std::shared_ptr<detail::model> model = detail::model::load_gguf(
         config.model_path.string(), load_options);
     timings.model_load_seconds = elapsed_seconds(stage_started);
+    // A pause is an externally persisted result, so provenance has to be
+    // populated before any later cancellation point (including K/V replay).
+    // The ABI refuses to create an unstamped blob rather than silently
+    // resuming it against a potentially different model.
+    const auto stamp_provenance = [&backend, &model](generation_result & value) {
+        value.backend_name = ggml_backend_name(backend.get());
+        value.model_name = model->provenance().name;
+        value.model_revision = model->provenance().model_revision;
+        value.model_sha256 = model->provenance().model_sha256;
+        value.runtime_revision = model->provenance().runtime_revision;
+        value.tokenizer_revision = model->provenance().tokenizer_revision;
+        value.tokenizer_sha256 = model->provenance().tokenizer_sha256;
+    };
 
     begin_stage(generation_stage::preparing_conditioning);
     const ByteLevelBPETokenizer tokenizer = ByteLevelBPETokenizer::load_embedded(
@@ -378,7 +469,7 @@ generation_result generate_tokens(const generation_config & config,
     const int32_t special = model->hparams().special_token_id;
     const detail::lm_output conditional_initial = conditional->decode(special, special, special);
     const detail::lm_output null_initial = null_branch->decode(special, special, special);
-    const detail::generation_logits initial_logits = cfg_logits_from_outputs(
+    detail::generation_logits current_logits = cfg_logits_from_outputs(
         conditional_initial, null_initial, config.cfg_scale);
     timings.prefill_seconds = elapsed_seconds(stage_started);
 
@@ -393,33 +484,61 @@ generation_result generate_tokens(const generation_config & config,
         value.stage_elapsed_seconds = elapsed_seconds(generation_started, now);
         latest_generation = value;
         if (progress) progress(value);
-        check_cancelled(config.cancelled);
     };
-    generation_result result = detail::run_generation_controller(
-        model->hparams(), config, initial_logits,
-        [&conditional, &null_branch, scale = config.cfg_scale](const std::array<int32_t, 3> & input) {
+    const auto advance = [&conditional, &null_branch, scale = config.cfg_scale](const std::array<int32_t, 3> & input) {
             return cfg_logits_from_outputs(conditional->decode(input[0], input[1], input[2]),
                                            null_branch->decode(input[0], input[1], input[2]), scale);
-        },
-        timed_progress);
+        };
+    if (resume) {
+        if (resume->delayed_sequence.size() != 3 || resume->delayed_sequence.front().empty()) {
+            fail("resume delayed sequence must contain three non-empty streams");
+        }
+        const std::size_t count = resume->delayed_sequence.front().size();
+        for (const auto & stream : resume->delayed_sequence) {
+            if (stream.size() != count) fail("resume delayed sequence rows have different lengths");
+        }
+        for (std::size_t index = 1; index < count; ++index) {
+            // The original checkpoint remains the durable boundary while K/V
+            // is rebuilt. A second stop here returns that state unchanged.
+            if (config.cancelled && config.cancelled()) {
+                detail::resumable_generation_result paused;
+                paused.paused = true;
+                paused.resume = *resume;
+                timings.generation_seconds = elapsed_seconds(generation_started);
+                timings.total_seconds = elapsed_seconds(total_started);
+                paused.result.timings = timings;
+                stamp_provenance(paused.result);
+                return paused;
+            }
+            current_logits = advance({
+                static_cast<int32_t>(resume->delayed_sequence[0][index]),
+                static_cast<int32_t>(resume->delayed_sequence[1][index]),
+                static_cast<int32_t>(resume->delayed_sequence[2][index]),
+            });
+        }
+    }
+    detail::resumable_generation_result outcome = detail::run_generation_controller_resumable(
+        model->hparams(), config, std::move(current_logits), advance, resume, timed_progress);
     timings.generation_seconds = elapsed_seconds(generation_started);
-    result.backend_name = ggml_backend_name(backend.get());
-    result.model_name = model->provenance().name;
-    result.model_revision = model->provenance().model_revision;
-    result.model_sha256 = model->provenance().model_sha256;
-    result.runtime_revision = model->provenance().runtime_revision;
-    result.tokenizer_revision = model->provenance().tokenizer_revision;
-    result.tokenizer_sha256 = model->provenance().tokenizer_sha256;
     timings.total_seconds = elapsed_seconds(total_started);
-    result.timings = timings;
+    outcome.result.timings = timings;
+    stamp_provenance(outcome.result);
+    if (outcome.paused) return outcome;
 
     current_stage = generation_stage::complete;
     stage_started = progress_clock::now();
     generation_progress complete = latest_generation;
-    complete.requested_frames = result.requested_frames;
-    complete.ended = result.ended;
+    complete.requested_frames = outcome.result.requested_frames;
+    complete.ended = outcome.result.ended;
     emit(complete);
-    return result;
+    return outcome;
+}
+
+generation_result generate_tokens(const generation_config & config,
+                                  generation_progress_callback progress) {
+    detail::resumable_generation_result result = generate_tokens_resumable(config, nullptr, std::move(progress));
+    if (result.paused) throw operation_cancelled();
+    return std::move(result.result);
 }
 
 void write_generation_artifact(const std::filesystem::path & output_path,

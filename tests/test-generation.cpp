@@ -104,6 +104,25 @@ int main() {
         expect(was_cancelled && cancel_polls == 2,
                "generation cancellation was not observed at a delayed-step boundary");
 
+        // A paused controller stores delayed IDs and a sampler cursor, not its
+        // K/V cache.  The caller supplies the replayed next-position logits;
+        // this stateless fixture makes that boundary directly testable.
+        generation_config resumable = config;
+        std::size_t resume_polls = 0;
+        resumable.cancelled = [&resume_polls] { return resume_polls++ >= 2; };
+        const resumable_generation_result paused = run_generation_controller_resumable(
+            hparams, resumable, logits_for(1, 2, 2),
+            [](const std::array<int32_t, 3> &) { return logits_for(1, 2, 2); });
+        expect(paused.paused && paused.resume.delayed_sequence.front().size() == 3,
+               "resumable controller did not retain its delayed prefix");
+        generation_config resumed_config = config;
+        const resumable_generation_result resumed = run_generation_controller_resumable(
+            hparams, resumed_config, logits_for(1, 2, 2),
+            [](const std::array<int32_t, 3> &) { return logits_for(1, 2, 2); },
+            &paused.resume);
+        expect(!resumed.paused && resumed.result.tokens == normal.tokens,
+               "resumed controller output differs from uninterrupted output");
+
         // An EOS drawn at a valid mixed position is retained through revert
         // and then removed, together with every frame after the earliest EOS.
         const generation_result eos = run_generation_controller(

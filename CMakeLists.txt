@@ -31,6 +31,7 @@ add_library(levo-core STATIC
     src/levo-checkpoint.cpp
     src/levo-conditioner.cpp
     src/levo-cuda-precision.cpp
+    src/levo-engine-request.cpp
     src/levo-flow-conditioning.cpp
     src/levo-flow-estimator.cpp
     src/levo-flow-model.cpp

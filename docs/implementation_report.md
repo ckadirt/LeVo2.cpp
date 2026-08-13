@@ -342,7 +342,33 @@ artifacts. Implementation and validation have not started.
   state boundary. Fresh behavior is unchanged; restarting at every synthetic
   step is exact and malformed resume states are rejected.
 
-The first slice is intentionally infrastructure only: no request parser,
-model-context reuse, serialized LeLM state, Flow window checkpoint, VAE pause,
-or CLI flag has landed. Existing user-facing cancellation behavior remains
-unchanged.
+The first slice was intentionally infrastructure only. The following CODES
+slice now supersedes its "no request parser/serialized LeLM state" limitation;
+Flow window checkpointing, VAE pause, and CLI flags remain pending.
+
+### Resumability implementation trace: CODES stage
+
+- The shared engine now advertises only `CANTOR_STAGE_CODES`. It accepts fresh
+  bounded request JSON or sniffs a `LEVOLM01` blob, and returns
+  `CANTOR_PAUSED` (status `1`, thread-local `CANTOR_ERR_CANCEL`) at a delayed
+  token boundary rather than treating stop as an error.
+- Fresh requests resolve a missing seed once, serialize it canonically into the
+  blob, and never require the caller to supply it again. The blob contains
+  `[3,S]` delayed int32 IDs, exact `mt19937_64` raw-draw cursor, EOS validation
+  state, a SHA-256 digest of the rebuilt next logits, and backend/model/runtime/
+  tokenizer stamps. K/V is never serialized.
+- Resume recreates the ordinary split prefill and replay-decodes each saved
+  delayed position before comparing the logit digest and continuing. A stop
+  while replaying returns the original logical checkpoint, so the durable
+  boundary is never weakened by a partial K/V rebuild.
+- The request decoder deliberately differs from the original `yyjson` plan: a
+  small strict decoder was implemented for the fixed schema, with duplicate and
+  unknown-field rejection, UTF-8 validation, JSON-number grammar validation,
+  1 MiB input limit, and exact `uint64` seed parsing. This avoids a new third-
+  party dependency; it must be replaced with a pinned parser if the schema
+  grows materially.
+- Asset-free verification passed on the CPU build: `cantor-abi`,
+  `engine-request`, `generation`, and `sampling`. These cover ABI discovery and
+  error ownership, strict request rejection, pause/resume controller equality,
+  and sampler continuation. Real-model CPU/CUDA cross-process equivalence is
+  still a required later validation gate.

@@ -2,10 +2,12 @@
 
 ## Status
 
-In progress. The first foundation slice has landed: a checked binary envelope,
-full loadable Cantor ABI surface (with no runnable stage advertised yet), a
-portable LeLM sampler cursor, and an exact resumable-Euler primitive. The next
-slice wires these into `CODES`; no user-visible resume operation exists yet.
+In progress. The foundation slice and the first runnable stage have landed:
+the shared engine now advertises `CANTOR_STAGE_CODES` and turns a LeLM
+cancellation into a durable `LEVOLM01` blob. It records the canonical resolved
+request, delayed IDs, sampler cursor, redundant EOS state, next-logit digest,
+and strict model/backend stamps; it rebuilds K/V sequentially on resume. Flow,
+VAE, and the CLI checkpoint adapters are not wired yet.
 
 This plan was prepared from the current LeVo2.cpp `main` at commit `12a1253`
 and the local ACE-Step reference at commit `79994ed` (whose staged-engine merge
@@ -15,11 +17,13 @@ LeVo before implementation starts.
 
 ## Current behavior
 
-LeVo generation is **not resumable today**.
+The ordinary C++/CLI generation path is **not resumable today**. The Cantor
+engine's `CODES` stage is resumable; `DIFFUSE` and `DECODE` remain unavailable.
 
-- LeLM polls cancellation at delayed autoregressive positions, then throws
-  `operation_cancelled`. The in-memory delayed sequence, sampler state, EOS
-  state, and both K/V sessions are destroyed.
+- The blocking `generate_tokens()` API still turns a cancellation into
+  `operation_cancelled`. The staged CODES API instead preserves the delayed
+  sequence, sampler/EOS state, and a replay-logit digest in a blob; K/V is
+  intentionally rebuilt rather than persisted.
 - Flow polls before each 1000-frame window and Euler velocity evaluation, then
   throws the same exception. The current normalized latent and all completed
   windows are destroyed.
@@ -101,11 +105,14 @@ as content-addressed components. Paused state instead records the expected
 component identities and rejects a context whose loaded components do not
 match.
 
-Vendor a pinned `yyjson` revision for strict parsing and canonical serialization
-rather than growing a handwritten Unicode JSON parser. Record it in
-`THIRD_PARTY_NOTICES.md`. Reject duplicate fields, unknown schema versions,
-trailing input, invalid UTF-8, non-finite numbers, and values outside the
-existing public configuration bounds.
+Use a small, internal strict JSON decoder for the engine request rather than
+pulling a new runtime dependency. It rejects duplicate and unknown fields,
+trailing input, invalid UTF-8, malformed JSON-number grammar, non-finite
+numbers, and a request larger than 1 MiB. This is an intentional implementation
+deviation from the originally proposed pinned `yyjson`; the narrow fixed schema
+and dedicated parser tests keep the actual dependency surface smaller. If the
+request schema expands beyond this small contract, replace it with a pinned
+parser rather than extending a general-purpose handwritten JSON implementation.
 
 Before the first cancellable unit, resolve an omitted LeLM seed exactly once and
 write the resolved value into the canonical request. The final token metadata
