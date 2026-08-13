@@ -138,6 +138,10 @@ for Flow and `26f9ea955f586ed3d7668fe345a851ba222b8db95b406e3eea3c9565f4a0b515`
 for the F32 VAE baseline. The F16 VAE SHA-256 is
 `23e5b11558ae332fbe216d9a06775884469fcbf32236c26ab52defa18c5c8398`.
 
+For measured 10.08-second CPU (eight physical cores) and RTX 4090 CUDA timing
+of every LeLM/Flow quantization tier plus F16/F32 VAE storage, see
+[`docs/quantization-benchmark-report.md`](docs/quantization-benchmark-report.md).
+
 `--steps 0` and `--cfg 0` select the checkpoint defaults (50 Euler steps,
 guidance 1.5). `--noise-f32` replaces the internal Gaussian draw with an
 explicit window-major `[windows, 1000, 64]` F32 blob, which is the exact

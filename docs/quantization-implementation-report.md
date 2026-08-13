@@ -90,17 +90,24 @@ loudly rather than silently changing a waveform.
 
 ### 2026-08-13 — 10.08-second CPU/CUDA performance matrix initiated
 
-- Began a separate, reproducible benchmark of LeLM, Flow, and VAE precision
-  variants using the frozen 10.08-second/252-frame fixture. The renderer runs
-  one Euler step so the full CPU/CUDA/profile matrix can execute while still
-  using the complete native Flow and VAE graphs; it is not a 50-step latency
+- Completed a separate, reproducible benchmark of all five LeLM and Flow
+  precision tiers plus F16/F32 VAE storage on the frozen
+  10.08-second/252-frame fixture. Renderer controls use one Euler step, so
+  they exercise full native Flow and VAE graphs but are not a 50-step latency
   claim.
-- CPU processes are hard-pinned to both SMT siblings of eight physical cores
-  (`0-7,16-23`), exactly half of this 16-core host. The report will retain
-  process wall time/RSS and renderer component timings, along with all model
-  identities and limitations.
-- Results and exact commands are recorded in
+- CPU processes were hard-pinned to both SMT siblings of eight physical cores
+  (`0-7,16-23`), exactly half of this 16-core host. The result is deliberately
+  stage-resolved: CPU F32 Flow spends 17.17 s in Flow and 46.16 s decoding the
+  fixed VAE; CUDA Q4_K_M Flow's 2.10x end-to-end renderer gain is mostly
+  smaller-artifact loading, not a 2x Flow-kernel claim.
+- VAE F16 storage halves artifact and load time while leaving F32 graph decode
+  unchanged, exactly as designed. The full tables, raw-evidence location,
+  exact commands, and declared single-run limits are recorded in
   [`quantization-benchmark-report.md`](quantization-benchmark-report.md).
+- Deviation resolved: two early CPU LeLM probes overlapped CUDA queue drain.
+  They remain outside the source tree for audit and are excluded. CPU F16 and
+  Q4_K_M were rerun after CUDA went idle; these clean values are the published
+  table entries.
 
 ### 2026-08-13 — contract and shared policy scaffold
 
