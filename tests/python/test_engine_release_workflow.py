@@ -13,6 +13,7 @@ def test_engine_workflow_carries_all_required_backend_contracts() -> None:
         "backend: cpu",
         "backend: cuda12",
         "backend: vulkan",
+        "humbletim/install-vulkan-sdk@v1.2",
         "-DGGML_CPU_ALL_VARIANTS=ON",
         "-DGGML_BACKEND_DL=ON",
         "libcantor_engine.so",

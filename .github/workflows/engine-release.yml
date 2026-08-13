@@ -57,7 +57,14 @@ jobs:
           set -euo pipefail
           sudo apt-get update -qq
           sudo apt-get install -y -qq --no-install-recommends \
-            build-essential ccache glslc libvulkan-dev ninja-build patchelf pkg-config
+            build-essential ccache ninja-build patchelf pkg-config
+
+      - name: Install Vulkan SDK
+        if: matrix.cmake_backend == 'vulkan'
+        uses: humbletim/install-vulkan-sdk@v1.2
+        with:
+          version: 1.4.309.0
+          cache: true
 
       - name: Install CUDA 12 toolkit
         if: matrix.cmake_backend == 'cuda'
