@@ -1,10 +1,12 @@
 #include "levo-progress.h"
 
+#include <algorithm>
 #include <cassert>
 #include <exception>
 #include <iostream>
 #include <sstream>
 #include <string>
+#include <thread>
 
 namespace {
 
@@ -69,6 +71,18 @@ int main() {
         writer.update(render);
     }
     assert(quiet_output.str().empty());
+
+    std::ostringstream heartbeat_output;
+    {
+        generation_progress_writer writer(progress_mode::plain, 0.01, heartbeat_output);
+        generation.stage = levo::generation_stage::loading_model;
+        generation.elapsed_seconds = 0.0;
+        generation.stage_elapsed_seconds = 0.0;
+        writer.update(generation);
+        std::this_thread::sleep_for(std::chrono::milliseconds(60));
+    }
+    const std::string heartbeats = heartbeat_output.str();
+    assert(std::count(heartbeats.begin(), heartbeats.end(), '\n') >= 2);
 
     std::cout << "progress formatting ok\n";
     return 0;

@@ -1,8 +1,8 @@
 #pragma once
 
 #include "levo.h"
+#include "ggml.h"
 
-#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <condition_variable>
@@ -39,17 +39,22 @@ inline double parse_progress_interval(const std::string & value) {
     }
 }
 
-inline std::atomic<bool> interrupted{false};
+inline void configure_ggml_logging(progress_mode mode) {
+    if (mode == progress_mode::plain) return;
+    ggml_log_set([](ggml_log_level, const char *, void *) {}, nullptr);
+}
 
-inline void signal_handler(int) { interrupted.store(true, std::memory_order_relaxed); }
+inline volatile std::sig_atomic_t interrupted = 0;
+
+inline void signal_handler(int) { interrupted = 1; }
 
 inline void install_signal_handlers() {
-    interrupted.store(false, std::memory_order_relaxed);
+    interrupted = 0;
     std::signal(SIGINT, signal_handler);
     std::signal(SIGTERM, signal_handler);
 }
 
-inline bool cancellation_requested() { return interrupted.load(std::memory_order_relaxed); }
+inline bool cancellation_requested() { return interrupted != 0; }
 
 inline const char * stage_name(levo::generation_stage stage) {
     switch (stage) {

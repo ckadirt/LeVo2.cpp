@@ -204,6 +204,7 @@ int main(int argc, char ** argv) {
 
         if (command.rfind("--", 0) == 0) {
             cli_generation_request request = parse_generation(argc, argv);
+            levo_cli::configure_ggml_logging(request.progress);
             request.config.cancelled = levo_cli::cancellation_requested;
             levo_cli::generation_progress_writer writer(request.progress, request.progress_interval);
             const levo::generation_result result = levo::generate_tokens(

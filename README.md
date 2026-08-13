@@ -59,6 +59,24 @@ Example commands:
 Use `--greedy` for deterministic argmax generation. The output is an int32
 NumPy tensor with shape `[3,T]` plus a JSON provenance sidecar.
 
+Both production CLIs report timestamped progress once per second by default.
+Generation identifies backend initialization, model loading, conditioning,
+prefix prefill, and delayed-token progress with throughput and ETA. Control the
+stream with:
+
+```bash
+# Machine-readable newline-delimited JSON on stderr
+./build-cuda/bin/levo-cli ... --progress json 2>generation.ndjson
+
+# Change the heartbeat interval, or suppress progress and GGML diagnostics
+./build-cuda/bin/levo-cli ... --progress-interval 2
+./build-cuda/bin/levo-cli ... --quiet
+```
+
+`--progress-interval 0` emits every computational event. `--progress none` is
+equivalent to `--quiet`. SIGINT/SIGTERM is checked cooperatively between token
+positions and exits with status 130 without writing a partial artifact.
+
 The frozen parity fixture is lyrics `[verse] Hello world.` with style
 `female, pop`. C++ and the official Python oracle produce byte-identical greedy
 arrays at 2.0 seconds (`[3,50]`), 10.08 seconds (`[3,252]`), and 30 seconds
@@ -88,6 +106,18 @@ the native Flow transformer and Oobleck VAE decoder:
   --output song.wav \
   --backend cuda --steps 50 --cfg 1.5 --seed 1234
 ```
+
+Flow progress includes the current renderer window and every completed Euler
+step, for example `window 2/3, Euler 27/50`, plus elapsed time, throughput, and
+ETA. VAE progress is reported per decoded window. The same `--progress
+plain|json|none`, `--progress-interval`, and `--quiet` controls are available;
+SIGINT/SIGTERM is checked at Euler-step, stage, and VAE-window boundaries.
+
+Alongside `song.wav`, the production CLI writes `song.wav.json`. This schema-1
+sidecar records the WAV SHA-256 and format, token tensor SHA-256, model/runtime
+provenance, backend, resolved Euler/CFG settings, seed, window count, and
+per-stage timings. The library retains `write_render_wav` for WAV-only callers
+and provides `write_render_artifact` for the paired artifact.
 
 Both renderer GGUFs are published alongside the LeLM artifact in
 [`ckadirt/LeVo2-GGUF`](https://huggingface.co/ckadirt/LeVo2-GGUF). The renderer

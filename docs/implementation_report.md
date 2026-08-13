@@ -222,3 +222,62 @@ The approved remediation contract is frozen in
 `docs/observability-plan.md`. Implementation begins from clean pushed source
 commit `49b053b0c676630142434ac2d43f511d60d9825a`; generated songs and model
 artifacts remain ignored.
+
+### Observability implementation trace
+
+- `20eea39` (`docs: define native observability contract`) froze event stages,
+  CLI modes, cancellation behavior, the WAV sidecar schema, and verification
+  gates before implementation.
+- `f4c3663` (`feat: expose native pipeline progress telemetry`) added public
+  generation/render stage and timing fields, per-window/per-Euler Flow events,
+  optional cancellation predicates, and the distinct `operation_cancelled`
+  exception. The existing `void` callback type remains source-compatible.
+- `46e0553` (`feat: add structured progress and render provenance`) added
+  plain and NDJSON CLI reporters, configurable one-second heartbeats, ETA and
+  throughput, quiet mode, SIGINT/SIGTERM handling, generation timing metadata,
+  and staged `song.wav` plus `song.wav.json` output with streaming SHA-256.
+- The first incremental compile exposed a missing direct `levo.h` include in
+  the internal Flow renderer header. Adding the dependency fixed the compile;
+  no graph or numerical code changed.
+- GGML emits CUDA device diagnostics directly to stderr by default. Successful
+  NDJSON streams would therefore not be parseable line-by-line. JSON and quiet
+  modes install a no-op GGML callback; plain mode retains the useful upstream
+  diagnostics. This affects logging only.
+
+Asset-free focused tests cover monotonic generation progress, exact Euler event
+counts, generation and Flow cancellation boundaries, progress-mode/interval
+validation, plain and JSON formatting, heartbeat repetition, quiet output,
+token timing metadata, render-sidecar content/hash, and cleanup when WAV
+validation fails. The complete CPU suite passes 22/22 and the complete CUDA
+suite passes 26/26.
+
+A real one-window CUDA smoke with five Euler steps printed every step with live
+rate and ETA, then the VAE and assembly stages. A separate one-step structured
+smoke emitted 12/12 JSON-parseable stderr events covering all nine renderer
+stages. Its schema-1 sidecar reports a 768,044-byte, two-second stereo F32 WAV
+with SHA-256
+`958d41ffa51ecb355d848537849780af686d1bb0fc83b3e330121a7192f346c3`;
+the independently hashed file agrees. Measured render time was 3.364 s and
+artifact completion 3.369 s.
+
+A real two-second CUDA LeLM smoke emitted 307 parseable generation events in
+the six required stages, completed 300/300 delayed positions, and persisted
+backend/model/conditioning/prefill/generation/total timings. Total generation
+time was 18.428 s. A quiet one-step render produced no stderr bytes. Sending
+SIGINT immediately after Flow Euler step 1/50 exited with status 130 and left
+neither a WAV nor metadata sidecar.
+
+The frozen one-window renderer parity smoke remains numerically unchanged:
+normalized-latent maximum error `4.8160553e-5`, decoded-window maximum error
+`1.77033246e-4`, and audio maximum error `2.87592411e-5` against the same
+oracle. No threshold, model input, noise value, tensor layout, or GGML graph
+changed.
+
+### Observability limitations and deviations
+
+GGUF loading and each VAE decode are monolithic lower-layer calls. Their exact
+start, completion, and elapsed time are reported, while a CLI heartbeat proves
+liveness between those boundaries; byte-level loader progress and per-operator
+VAE progress are not fabricated. Cooperative cancellation likewise takes
+effect at the next safe boundary and cannot interrupt a GGML graph already in
+flight. These are the explicit granularity limits of this milestone.

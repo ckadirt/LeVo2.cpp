@@ -1,5 +1,12 @@
 # Native pipeline observability plan
 
+## Completion status
+
+Complete on `main`. The library event/cancellation seam landed in `f4c3663`;
+the structured CLI, heartbeat, and durable render-artifact implementation
+landed in `46e0553`. Final CPU/CUDA regressions and real-model evidence are
+recorded in `implementation_report.md`.
+
 ## Motivation
 
 The v0.2 API exposes callbacks, but the renderer reports only coarse stage

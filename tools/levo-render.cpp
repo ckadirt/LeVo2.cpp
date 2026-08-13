@@ -111,6 +111,7 @@ int main(int argc, char ** argv) {
             throw std::invalid_argument("--output must use the .wav extension");
         }
         levo_cli::install_signal_handlers();
+        levo_cli::configure_ggml_logging(progress_mode);
         config.cancelled = levo_cli::cancellation_requested;
         levo_cli::render_progress_writer writer(progress_mode, progress_interval);
         const levo::render_result result = levo::render_tokens_to_audio(
