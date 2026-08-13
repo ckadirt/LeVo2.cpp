@@ -43,6 +43,9 @@ Cantor relay and deploys the Worker.
 - Added the deterministic `docs/cloudflare-catalog-v1.json` handoff and tests
   that prove it is generated from the publisher, uses the exact ABI role names,
   uses `sha256:`-prefixed model digests, and changes only `lm` across tiers.
+- Added a non-blocking local publisher lock after detecting that detached shell
+  monitoring could accidentally start a second publication. A second local
+  invocation now fails before it can race an immutable R2 key.
 - **Deviation recorded:** the referenced canonical `upload_ckpts.py` was not
   present in this workspace or the available Cantor/ACE repositories. A local,
   compatible implementation was added instead, including the required

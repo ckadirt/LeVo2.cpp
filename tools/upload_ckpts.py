@@ -13,13 +13,14 @@ an existing object and always verifies the public CDN contract afterwards.
 from __future__ import annotations
 
 import argparse
+import fcntl
 import hashlib
 import json
 import os
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
@@ -170,7 +171,7 @@ def catalog() -> dict[str, Any]:
 
 
 def canonical_json(value: Any) -> str:
-    return json.dumps(value, indent=2, sort_keys=False) + "\n"
+    return json.dumps(value, indent=2, sort_keys=False, ensure_ascii=False) + "\n"
 
 
 def write_json(path: Path, value: Any) -> None:
@@ -235,6 +236,33 @@ def update_manifest(
         )
     manifest[component.filename] = expected
     write_json(path, manifest)
+
+
+class publication_lock:
+    """A non-blocking local lock preventing concurrent mutable publish state."""
+
+    def __init__(self, manifest_path: Path) -> None:
+        self._path = manifest_path.with_suffix(manifest_path.suffix + ".lock")
+        self._file: Any | None = None
+
+    def __enter__(self) -> Iterator[None]:
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+        self._file = self._path.open("a+", encoding="utf-8")
+        try:
+            fcntl.flock(self._file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as exc:
+            self._file.close()
+            self._file = None
+            raise PublicationError(
+                f"another LeVo2 R2 publish is already using {self._path}"
+            ) from exc
+        return iter(())
+
+    def __exit__(self, exc_type: Any, exc: Any, traceback: Any) -> None:
+        if self._file is not None:
+            fcntl.flock(self._file.fileno(), fcntl.LOCK_UN)
+            self._file.close()
+            self._file = None
 
 
 def s3_client_from_environment() -> tuple[Any, str]:
@@ -423,13 +451,14 @@ def main() -> int:
             verify_public(component)
         return 0
 
-    client, bucket = s3_client_from_environment()
-    manifest = load_manifest(args.manifest)
-    for component in COMPONENTS:
-        upload_component(client, bucket, component)
-        update_manifest(args.manifest, manifest, component)
-    for component in COMPONENTS:
-        verify_public(component)
+    with publication_lock(args.manifest):
+        client, bucket = s3_client_from_environment()
+        manifest = load_manifest(args.manifest)
+        for component in COMPONENTS:
+            upload_component(client, bucket, component)
+            update_manifest(args.manifest, manifest, component)
+        for component in COMPONENTS:
+            verify_public(component)
     return 0
 
 

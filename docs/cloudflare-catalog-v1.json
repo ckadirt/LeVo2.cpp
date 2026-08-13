@@ -33,7 +33,11 @@
           ],
           "needs": {
             "vram_bytes": 4294967296,
-            "backends": ["cuda12", "vulkan", "cpu"]
+            "backends": [
+              "cuda12",
+              "vulkan",
+              "cpu"
+            ]
           }
         },
         {
@@ -63,7 +67,11 @@
           ],
           "needs": {
             "vram_bytes": 8589934592,
-            "backends": ["cuda12", "vulkan", "cpu"]
+            "backends": [
+              "cuda12",
+              "vulkan",
+              "cpu"
+            ]
           }
         },
         {
@@ -93,7 +101,11 @@
           ],
           "needs": {
             "vram_bytes": 21474836480,
-            "backends": ["cuda12", "vulkan", "cpu"]
+            "backends": [
+              "cuda12",
+              "vulkan",
+              "cpu"
+            ]
           }
         }
       ]
