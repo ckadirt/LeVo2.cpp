@@ -2,12 +2,13 @@
 
 ## Completion status
 
-Implementation gates 1-9 and the local release gate are complete. The passing
-eight-case matrix, public API smoke, artifact hashes, timings, memory, and
-deviations are recorded in `renderer-implementation-report.md` and
-`renderer-release-matrix.json`. Remote artifact verification and the annotated
-`v0.2.0` tag are the remaining publication actions; their immutable revisions
-are appended to the implementation report after completion.
+Implementation gates 1-10 are complete. The passing eight-case matrix, public
+API smoke, artifact hashes, timings, memory, deviations, and anonymous remote
+artifact verification are recorded in `renderer-implementation-report.md` and
+`renderer-release-matrix.json`. The model-repository `v0.2.0` tag resolves to
+the immutable verified revision recorded there. The source tag and GitHub
+release are the final publication actions and are created only from the clean,
+audited release commit.
 
 ## Objective
 

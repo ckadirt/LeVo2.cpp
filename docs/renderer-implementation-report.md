@@ -2,8 +2,9 @@
 
 ## Status
 
-The native renderer is complete and release-gated. The eight-case full-window
-matrix and the public lyrics-to-WAV smoke pass with measured evidence below.
+The native renderer is complete, release-gated, and published. The eight-case
+full-window matrix, the public lyrics-to-WAV smoke, and an anonymous download
+of the published Flow/VAE artifacts pass with measured evidence below.
 Token-to-WAV rendering runs entirely in C++/GGML: dual RVQ conditioning, the
 16-block Flow velocity transformer,
 classifier-free guidance, uniform Euler integration, 1000/750/250 window
@@ -211,3 +212,41 @@ native seed 1234 in 10.177 s with 10,140 MiB peak GPU memory. The resulting
 IEEE-F32 WAV is stereo 48 kHz with 1,440,000 samples per channel, finite,
 non-silent (RMS `0.390319`, absolute peak `1.852677`), 11,520,044 bytes, and
 SHA-256 `b6b7a3d60ce01b3a2644c4ef9adf2b0306021ec2d22b0cdf1719b25a948a83ed`.
+
+### Public artifact verification
+
+The Flow and VAE artifacts, checksum sidecars, manifests, model card, naming
+contract, license, and third-party notices were published to
+`ckadirt/LeVo2-GGUF`. The immutable Hugging Face revision is
+`04b6819a185fb33fc5e35669688694d820bacb26`; the model-repository tag `v0.2.0`
+points to that exact revision.
+
+A client with both Hugging Face token environment variables removed queried
+that revision and downloaded it into a separate directory and cache. The
+downloaded files reproduced the release hashes and byte counts:
+
+| Artifact | Bytes | SHA-256 |
+| --- | ---: | --- |
+| `LeVo2-v2-flow-F32.gguf` | 2,653,259,456 | `a8cf50dbecef243501b9b345109b1d2f283b3e22f4e4856715197e4b22129d10` |
+| `LeVo2-v2-vae-F32.gguf` | 337,596,448 | `26f9ea955f586ed3d7668fe345a851ba222b8db95b406e3eea3c9565f4a0b515` |
+
+For each artifact, the downloaded bytes, `.sha256` sidecar, and manifest digest
+agree, and the manifest byte count agrees with the file size. Both anonymous
+artifacts pass the strict `flow-model` and `vae-model` tests in the CPU and CUDA
+builds (2/2 in each build).
+
+The one-window, one-step CUDA parity smoke was then rerun with the anonymously
+downloaded artifacts and the frozen 50-frame oracle. It passed with worst
+latent maximum error `4.8160553e-5`, worst latent relative RMS
+`4.5724686e-6`, worst decoded-window maximum error `1.77033246e-4`, and worst
+audio maximum error `2.87592411e-5`. This is an execution check of the public
+bytes in addition to the full eight-case staged-artifact matrix above.
+
+Three initial verification invocations failed before changing or executing
+model code: the first manifest helper expected `artifact.size_bytes` while the
+published schema names the field `artifact.bytes`; the first parity command
+assumed a `build-cuda/bin/` executable directory while this build uses the
+build root; and the corrected binary accepts the public backend spelling
+`cuda`, not its diagnostic output label `CUDA0`. The helpers were corrected
+against the tracked manifest and CLI contracts. The hashes, binaries,
+thresholds, test fixtures, and published revision were unchanged.

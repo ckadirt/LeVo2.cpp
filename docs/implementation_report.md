@@ -203,4 +203,8 @@ The renderer implementation history, release deviations, full eight-case
 Python/C++ parity matrix, performance, and WAV evidence are maintained in
 `docs/renderer-implementation-report.md` and
 `docs/renderer-release-matrix.json`. The v0.1 LeLM F16 GGUF is unchanged and is
-the token-generation half of the v0.2 end-to-end pipeline.
+the token-generation half of the v0.2 end-to-end pipeline. The public Flow and
+VAE artifacts are pinned by the model-repository tag `v0.2.0` and immutable
+Hugging Face revision `04b6819a185fb33fc5e35669688694d820bacb26`; their
+anonymous download, hash, strict-loader, and execution checks are recorded in
+the renderer report.
