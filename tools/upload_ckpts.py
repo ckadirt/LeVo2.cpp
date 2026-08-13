@@ -17,12 +17,12 @@ import fcntl
 import hashlib
 import json
 import os
+import shutil
+import subprocess
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterator
-from urllib.error import HTTPError
-from urllib.request import Request, urlopen
 
 
 HF_REPO = "ckadirt/LeVo2-GGUF"
@@ -373,37 +373,80 @@ def upload_component(client: Any, bucket: str, component: Component) -> None:
     print(f"uploaded immutable: {key}")
 
 
-def _public_response(request: Request) -> Any:
+def _parse_curl_headers(raw_headers: str, url: str) -> tuple[int, dict[str, str]]:
+    blocks = [block for block in raw_headers.replace("\r\n", "\n").split("\n\n") if block.strip()]
+    if not blocks:
+        raise PublicationError(f"curl returned no response headers: {url}")
+    lines = blocks[-1].splitlines()
     try:
-        return urlopen(request, timeout=60)
-    except HTTPError as exc:
-        raise PublicationError(f"public object request failed ({exc.code}): {request.full_url}") from exc
+        status = int(lines[0].split()[1])
+    except (IndexError, ValueError) as exc:
+        raise PublicationError(f"curl returned malformed response headers: {url}") from exc
+    headers: dict[str, str] = {}
+    for line in lines[1:]:
+        if ":" in line:
+            name, value = line.split(":", 1)
+            headers[name.lower()] = value.strip()
+    return status, headers
+
+
+def curl_public_request(url: str, extra_args: list[str]) -> tuple[int, dict[str, str], bytes]:
+    curl = shutil.which("curl")
+    if curl is None:
+        raise PublicationError("public R2 verification requires curl on PATH")
+    with tempfile.TemporaryDirectory(prefix="levo2-r2-verify-") as directory:
+        root = Path(directory)
+        headers_path = root / "headers.txt"
+        body_path = root / "body.bin"
+        command = [
+            curl,
+            "--silent",
+            "--show-error",
+            "--location",
+            "--max-time",
+            "60",
+            "--user-agent",
+            "LeVo2-R2-Publisher/1.0",
+            "--dump-header",
+            str(headers_path),
+            "--output",
+            str(body_path),
+            *extra_args,
+            url,
+        ]
+        result = subprocess.run(command, text=True, capture_output=True, check=False)
+        if result.returncode != 0:
+            detail = result.stderr.strip() or f"curl exit {result.returncode}"
+            raise PublicationError(f"public object request failed: {url}: {detail}")
+        status, headers = _parse_curl_headers(headers_path.read_text(encoding="iso-8859-1"), url)
+        return status, headers, body_path.read_bytes()
 
 
 def verify_public(component: Component) -> None:
     url = public_url(component)
-    with _public_response(Request(url, method="HEAD")) as response:
-        headers = response.headers
-        if response.status != 200:
-            raise PublicationError(f"public HEAD returned {response.status}: {url}")
-        if headers.get("Content-Length") != str(component.bytes):
-            raise PublicationError(f"public Content-Length mismatch: {url}")
-        cache_control = headers.get("Cache-Control", "")
-        if not all(token in cache_control for token in ("public", "max-age=31536000", "immutable")):
-            raise PublicationError(f"public immutable Cache-Control missing: {url}")
-        if "bytes" not in headers.get("Accept-Ranges", "").lower():
-            raise PublicationError(f"public byte ranges unavailable: {url}")
-    ranged = Request(url, headers={"Range": "bytes=0-0"})
-    with _public_response(ranged) as response:
-        if response.status != 206:
-            raise PublicationError(f"public range request did not return 206: {url}")
-        if response.headers.get("Content-Length") != "1":
-            raise PublicationError(f"public range length mismatch: {url}")
-        expected_range = f"bytes 0-0/{component.bytes}"
-        if response.headers.get("Content-Range") != expected_range:
-            raise PublicationError(f"public Content-Range mismatch: {url}")
-        if len(response.read()) != 1:
-            raise PublicationError(f"public range body mismatch: {url}")
+    # Cloudflare serves the endpoint correctly to curl but rejects or drops
+    # Python's stdlib HTTP client. Use curl for the same HEAD/range semantics
+    # the node's downloader relies on, with an explicit release user agent.
+    status, headers, _ = curl_public_request(url, ["--head"])
+    if status != 200:
+        raise PublicationError(f"public HEAD returned {status}: {url}")
+    if headers.get("content-length") != str(component.bytes):
+        raise PublicationError(f"public Content-Length mismatch: {url}")
+    cache_control = headers.get("cache-control", "")
+    if not all(token in cache_control for token in ("public", "max-age=31536000", "immutable")):
+        raise PublicationError(f"public immutable Cache-Control missing: {url}")
+    if "bytes" not in headers.get("accept-ranges", "").lower():
+        raise PublicationError(f"public byte ranges unavailable: {url}")
+    status, headers, body = curl_public_request(url, ["--range", "0-0"])
+    if status != 206:
+        raise PublicationError(f"public range request did not return 206: {url}")
+    if headers.get("content-length") != "1":
+        raise PublicationError(f"public range length mismatch: {url}")
+    expected_range = f"bytes 0-0/{component.bytes}"
+    if headers.get("content-range") != expected_range:
+        raise PublicationError(f"public Content-Range mismatch: {url}")
+    if len(body) != 1:
+        raise PublicationError(f"public range body mismatch: {url}")
     print(f"verified public: {url}")
 
 

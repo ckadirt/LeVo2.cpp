@@ -46,6 +46,11 @@ Cantor relay and deploys the Worker.
 - Added a non-blocking local publisher lock after detecting that detached shell
   monitoring could accidentally start a second publication. A second local
   invocation now fails before it can race an immutable R2 key.
+- **Deviation resolved:** Cloudflare serves the custom domain to ordinary
+  clients but rejects or drops Python's stdlib HTTP client. The public verifier
+  now invokes `curl` with the explicit `LeVo2-R2-Publisher/1.0` identifier;
+  direct validation then returned HTTP 200, the immutable cache policy, and a
+  one-byte HTTP 206 range response for the first uploaded blob.
 - **Deviation recorded:** the referenced canonical `upload_ckpts.py` was not
   present in this workspace or the available Cantor/ACE repositories. A local,
   compatible implementation was added instead, including the required
