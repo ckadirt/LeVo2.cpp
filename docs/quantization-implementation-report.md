@@ -277,6 +277,19 @@ loudly rather than silently changing a waveform.
   convolution, bias, and SnakeBeta promotion. Publication follows the normal
   code commit/push and public remote verification sequence.
 
+### 2026-08-13 — F16 VAE Hugging Face publication and public verification
+
+- Pushed the runtime, converter, tests, model-card updates, and validation
+  evidence to `origin/main` in `01e5d04` before publishing the artifact.
+- Added `LeVo2-v2-vae-F16.gguf` plus its checksum and deterministic manifest
+  to public `ckadirt/LeVo2-GGUF` in immutable commit
+  `69131510e84c2533041c003238f882366bf96a1d`; no existing model file was
+  replaced.
+- Repeated the no-credential remote audit: public sidecar and manifest content,
+  public LFS SHA-256, and public byte count all match the staged F16 VAE.
+  The full artifact identity and CPU/CUDA waveform evidence are frozen in
+  [`quantization-validation-matrix.json`](quantization-validation-matrix.json).
+
 ## Deviations
 
 None so far.

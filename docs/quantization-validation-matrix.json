@@ -14,8 +14,9 @@
       "Q5_K_M": "0a1662e0d41e78dc97cce74867aa39453106b52f",
       "Q4_K_M": "ef9f0738a04df39a98782bcece3ef288b8780707"
     },
+    "vae_f16_commit": "69131510e84c2533041c003238f882366bf96a1d",
     "documentation_commit": "b97bb0df7fef177200acddcfbd5339b545b835ea",
-    "public_verification": "Downloaded public sidecars/manifests and public Hub LFS SHA-256/byte metadata matched every local artifact."
+    "public_verification": "Downloaded public sidecars/manifests and public Hub LFS SHA-256/byte metadata matched every local artifact, including the F16 VAE."
   },
   "lelm": {
     "fixture": {
