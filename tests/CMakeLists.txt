@@ -57,3 +57,11 @@ target_compile_definitions(test-tokenizer PRIVATE
     LEVO_TEST_FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures")
 target_compile_definitions(test-conditioner PRIVATE
     LEVO_TEST_FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures")
+
+add_executable(test-residency test-residency.cpp)
+target_link_libraries(test-residency PRIVATE levo::core)
+target_include_directories(test-residency PRIVATE ${PROJECT_SOURCE_DIR}/src)
+add_test(NAME residency COMMAND test-residency)
+if(GGML_BACKEND_DL)
+    set_tests_properties(residency PROPERTIES WORKING_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+endif()

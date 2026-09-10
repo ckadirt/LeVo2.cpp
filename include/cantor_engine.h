@@ -67,8 +67,8 @@ typedef struct {
 } cantor_component;
 
 typedef struct {
-    uint64_t vram_budget_bytes;
-    int      keep_loaded;
+    uint64_t vram_budget_bytes; // Reserved: no byte-budget eviction in this engine.
+    int      keep_loaded;       // Nonzero retains model weights until context destruction.
     int      vae_chunk;
     int      vae_overlap;
     int      n_threads;

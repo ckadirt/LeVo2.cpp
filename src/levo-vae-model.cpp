@@ -389,5 +389,8 @@ ggml_backend_t vae_model::backend() const noexcept { return impl_->backend; }
 ggml_tensor * vae_model::tensor(const std::string & name) const { const auto found = impl_->tensors.find(name); return found == impl_->tensors.end() ? nullptr : found->second; }
 bool vae_model::contains(const std::string & name) const noexcept { return impl_->tensors.find(name) != impl_->tensors.end(); }
 std::size_t vae_model::tensor_count() const noexcept { return impl_->tensors.size(); }
+std::size_t vae_model::resident_bytes() const noexcept {
+    return impl_->buffer ? ggml_backend_buffer_get_size(impl_->buffer.get()) : 0;
+}
 
 } // namespace levo::detail

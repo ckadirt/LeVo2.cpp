@@ -755,6 +755,9 @@ bool model::contains(const std::string & name) const noexcept {
 }
 
 std::size_t model::tensor_count() const noexcept { return impl_->tensors.size(); }
+std::size_t model::resident_bytes() const noexcept {
+    return impl_->buffer ? ggml_backend_buffer_get_size(impl_->buffer.get()) : 0;
+}
 const tokenizer_assets & model::tokenizer() const noexcept { return impl_->tokenizer; }
 const model_provenance & model::provenance() const noexcept { return impl_->provenance; }
 

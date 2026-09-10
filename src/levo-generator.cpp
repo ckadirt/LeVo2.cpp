@@ -25,16 +25,6 @@
 namespace levo {
 namespace {
 
-struct backend_deleter {
-    void operator()(ggml_backend_t backend) const noexcept {
-        if (backend != nullptr) {
-            ggml_backend_free(backend);
-        }
-    }
-};
-
-using backend_ptr = std::unique_ptr<ggml_backend, backend_deleter>;
-
 [[noreturn]] void fail(const std::string & message) {
     throw std::runtime_error("LeVo generation: " + message);
 }
@@ -393,7 +383,8 @@ detail::resumable_generation_result generate_tokens_resumable(
     const generation_config & config,
     const detail::generation_resume_state * resume,
     generation_progress_callback progress,
-    generation_model_ready_callback model_ready) {
+    generation_model_ready_callback model_ready,
+    std::shared_ptr<detail::resident_model<detail::model>> * model_cache) {
     if (config.model_path.empty()) {
         throw std::invalid_argument("a GGUF model path is required");
     }
@@ -423,17 +414,17 @@ detail::resumable_generation_result generate_tokens_resumable(
     // first-token logit, so use the parity-safe mode unless the caller has
     // explicitly selected another GGML compute type.
     configure_cuda_compute_type(device);
-    backend_ptr backend(ggml_backend_dev_init(device, nullptr));
-    if (!backend) {
-        fail("failed to initialize the requested GGML backend");
-    }
     timings.backend_seconds = elapsed_seconds(stage_started);
 
     begin_stage(generation_stage::loading_model);
-    detail::model_load_options load_options;
-    load_options.backend = backend.get();
-    const std::shared_ptr<detail::model> model = detail::model::load_gguf(
-        config.model_path.string(), load_options);
+    const auto loaded = detail::load_resident_model(model_cache, config.model_path.string(), device,
+        [&](ggml_backend_t backend) {
+            detail::model_load_options options;
+            options.backend = backend;
+            return detail::model::load_gguf(config.model_path.string(), options);
+        });
+    const auto & backend = loaded->backend;
+    const auto & model = loaded->weights;
     timings.model_load_seconds = elapsed_seconds(stage_started);
     // A pause is an externally persisted result, so provenance has to be
     // populated before any later cancellation point (including K/V replay).

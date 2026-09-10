@@ -340,5 +340,8 @@ const flow_hparams & model::hparams() const noexcept { return impl_->hp; } const
 ggml_tensor * model::tensor(const std::string & name) const { const auto it = impl_->tensors.find(name); return it == impl_->tensors.end() ? nullptr : it->second; }
 bool model::contains(const std::string & name) const noexcept { return impl_->tensors.find(name) != impl_->tensors.end(); }
 std::size_t model::tensor_count() const noexcept { return impl_->tensors.size(); }
+std::size_t model::resident_bytes() const noexcept {
+    return impl_->buffer ? ggml_backend_buffer_get_size(impl_->buffer.get()) : 0;
+}
 
 } // namespace levo::flow

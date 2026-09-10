@@ -32,6 +32,9 @@ struct cantor_ctx {
     std::string dit_path;
     std::string vae_path;
     cantor_load_opts options{};
+    std::shared_ptr<levo::detail::resident_model<levo::detail::model>> lm;
+    std::shared_ptr<levo::detail::resident_model<levo::flow::model>> flow;
+    std::shared_ptr<levo::detail::resident_model<levo::detail::vae_model>> vae;
     std::vector<float> audio;
     int audio_samples = 0;
 };
@@ -44,13 +47,6 @@ constexpr std::array<char, 8> latent_magic{{'L', 'E', 'V', 'O', 'L', 'T', '0', '
 constexpr std::array<char, 8> lm_magic_v1{{'L', 'E', 'V', 'O', 'L', 'M', '0', '1'}};
 constexpr std::array<char, 8> flow_magic_v1{{'L', 'E', 'V', 'O', 'F', 'L', '0', '1'}};
 constexpr std::array<char, 8> latent_magic_v1{{'L', 'E', 'V', 'O', 'L', 'T', '0', '1'}};
-
-struct backend_deleter {
-    void operator()(ggml_backend_t backend) const noexcept {
-        if (backend != nullptr) ggml_backend_free(backend);
-    }
-};
-using backend_ptr = std::unique_ptr<ggml_backend, backend_deleter>;
 
 thread_local cantor_error g_last_error_code = CANTOR_OK;
 thread_local std::string g_last_error;
@@ -517,7 +513,8 @@ cantor_status run_codes(cantor_ctx * context, const std::uint8_t * input, std::s
         if (resuming) validate_stamp(expected_stamp, model_stamp);
     };
     levo::detail::resumable_generation_result result = levo::generate_tokens_resumable(
-        config, resuming ? &resume_state : nullptr, report, verify_resume_stamp);
+        config, resuming ? &resume_state : nullptr, report, verify_resume_stamp,
+        context->options.keep_loaded ? &context->lm : nullptr);
 
     if (result.paused) {
         const lm_stamp stamp = stamp_from_result(result.result);
@@ -697,10 +694,13 @@ cantor_status run_flow(cantor_ctx * context, const std::uint8_t * input, std::si
     ggml_backend_dev_t device = select_engine_device();
     levo::detail::configure_cuda_gemm_f32_accumulation(device);
     levo::detail::configure_cuda_disable_tf32(device);
-    backend_ptr backend(ggml_backend_dev_init(device, nullptr));
-    if (!backend) throw std::runtime_error("cannot initialize Flow backend");
-    const std::shared_ptr<levo::flow::model> model = levo::flow::model::load_gguf(
-        context->dit_path, {backend.get(), true, true, false});
+    const auto loaded = levo::detail::load_resident_model(
+        context->options.keep_loaded ? &context->flow : nullptr, context->dit_path, device,
+        [&](ggml_backend_t backend) {
+            return levo::flow::model::load_gguf(context->dit_path, {backend, true, true, false});
+        });
+    const auto & backend = loaded->backend;
+    const auto & model = loaded->weights;
     const levo::flow::flow_hparams & hp = model->hparams();
     if (hp.window_frames != static_cast<int32_t>(levo::renderer_window_frames) ||
         hp.hop_frames != static_cast<int32_t>(levo::renderer_hop_frames) ||
@@ -874,10 +874,13 @@ cantor_status run_decode(cantor_ctx * context, const std::uint8_t * input, std::
     ggml_backend_dev_t device = select_engine_device();
     levo::detail::configure_cuda_gemm_f32_accumulation(device);
     levo::detail::configure_cuda_disable_tf32(device);
-    backend_ptr backend(ggml_backend_dev_init(device, nullptr));
-    if (!backend) throw std::runtime_error("cannot initialize VAE backend");
-    const std::shared_ptr<levo::detail::vae_model> model = levo::detail::vae_model::load_gguf(
-        context->vae_path, {backend.get(), true, true, true});
+    const auto loaded = levo::detail::load_resident_model(
+        context->options.keep_loaded ? &context->vae : nullptr, context->vae_path, device,
+        [&](ggml_backend_t backend) {
+            return levo::detail::vae_model::load_gguf(context->vae_path, {backend, true, true, true});
+        });
+    const auto & backend = loaded->backend;
+    const auto & model = loaded->weights;
     if (model->provenance().artifact_sha256.empty()) {
         throw std::runtime_error("VAE artifact digest is unavailable");
     }
@@ -1041,12 +1044,16 @@ const float * cantor_engine_audio(cantor_ctx * context, int * n_samples, int * s
     return context && !context->audio.empty() ? context->audio.data() : nullptr;
 }
 
-uint64_t cantor_engine_resident_bytes(cantor_ctx *) {
-    return 0;
+uint64_t cantor_engine_resident_bytes(cantor_ctx * context) {
+    if (!context) return 0;
+    return (context->lm ? context->lm->weights->resident_bytes() : 0) +
+           (context->flow ? context->flow->weights->resident_bytes() : 0) +
+           (context->vae ? context->vae->weights->resident_bytes() : 0);
 }
 
-int cantor_engine_resident_modules(cantor_ctx *) {
-    return 0;
+int cantor_engine_resident_modules(cantor_ctx * context) {
+    if (!context) return 0;
+    return int(bool(context->lm)) + int(bool(context->flow)) + int(bool(context->vae));
 }
 
 } // extern "C"

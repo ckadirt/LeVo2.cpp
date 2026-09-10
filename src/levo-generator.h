@@ -2,6 +2,7 @@
 
 #include "levo.h"
 #include "levo-model.h"
+#include "levo-resident-model.h"
 #include "levo-sampling.h"
 
 #include <array>
@@ -70,6 +71,7 @@ detail::resumable_generation_result generate_tokens_resumable(
     const generation_config & config,
     const detail::generation_resume_state * resume = nullptr,
     generation_progress_callback progress = {},
-    generation_model_ready_callback model_ready = {});
+    generation_model_ready_callback model_ready = {},
+    std::shared_ptr<detail::resident_model<detail::model>> * model_cache = nullptr);
 
 } // namespace levo

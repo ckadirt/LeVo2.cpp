@@ -165,6 +165,7 @@ public:
     [[nodiscard]] ggml_tensor * tensor(const std::string & name) const;
     [[nodiscard]] bool contains(const std::string & name) const noexcept;
     [[nodiscard]] std::size_t tensor_count() const noexcept;
+    [[nodiscard]] std::size_t resident_bytes() const noexcept;
     [[nodiscard]] const tokenizer_assets & tokenizer() const noexcept;
     [[nodiscard]] const model_provenance & provenance() const noexcept;
 
