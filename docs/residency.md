@@ -18,3 +18,8 @@ Destroying the context releases every retained model.
 retained models and their weight-buffer bytes; they exclude transient graphs,
 KV and driver allocations. Test repeated generation, changed requests and
 pause/resume on a GPU before treating a new backend build as GPU-validated.
+
+Cantor input uses `caption`, optional `lyrics` and `duration`. Legacy
+`description`/`duration_seconds` requests and checkpoints remain readable.
+Flat `inference_steps`, `guidance_scale`, `cfg_scale`, `temperature`,
+`top_k_mixed` and `top_k_detail` controls support catalog-driven clients.

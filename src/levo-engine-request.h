@@ -31,9 +31,16 @@ struct codes {
 };
 
 // Strict request parsing for the C engine. The accepted object is deliberately
-// small: lyrics, description, duration_seconds (or duration), optional seed,
-// cfg_scale, and an optional sampling object. Unknown fields are rejected so a
-// caller cannot believe that an ignored setting affected a checkpoint.
+// small: a required caption, optional lyrics, duration_seconds (or duration,
+// defaulting to a conventional song length), optional seed, cfg_scale,
+// inference_steps, guidance_scale, and optional sampling and flow objects.
+// Unknown fields are rejected so a caller cannot believe that an ignored
+// setting affected a checkpoint.
+//
+// The field names are the host's, not this model's: `caption` is what Cantor
+// calls the text prompt, and `inference_steps`/`guidance_scale` are its
+// engine-neutral names for the two knobs that land on the Flow renderer here.
+// Translating at this boundary is what lets the node stay family-agnostic.
 request parse(const std::string & json);
 
 // Strict parser for a CODES completion emitted by this engine.
@@ -46,7 +53,9 @@ generation_config generation_config_for(const request & value,
                                         const std::string & model_path);
 
 // Completed CODES output consumed by the later DIFFUSE stage. It repeats the
-// resolved request and provides canonical stream-major int32 audio codes.
+// resolved request, promotes its duration to the top level for the host's
+// pre-DIFFUSE ceiling check, and provides canonical stream-major int32 audio
+// codes.
 std::string serialize_codes(const request & value, const generation_result & result);
 
 } // namespace levo::engine_request

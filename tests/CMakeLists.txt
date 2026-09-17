@@ -65,3 +65,7 @@ add_test(NAME residency COMMAND test-residency)
 if(GGML_BACKEND_DL)
     set_tests_properties(residency PROPERTIES WORKING_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 endif()
+
+if(NOT MSVC)
+    target_compile_options(test-engine-request PRIVATE -UNDEBUG)
+endif()

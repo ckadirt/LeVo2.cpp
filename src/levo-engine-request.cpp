@@ -21,6 +21,12 @@ namespace {
 
 constexpr std::size_t k_max_request_bytes = 1024U * 1024U;
 
+// The host may omit a length: its protocol makes duration optional because
+// ACE-Step's LM plans its own. LeVo has to be told one, so the adapter picks a
+// conventional song length rather than making the caller guess. Well inside
+// the 0 < seconds <= 270 the generator enforces.
+constexpr double k_default_duration_seconds = 120.0;
+
 bool valid_utf8(const std::string & source);
 
 struct value {
@@ -356,20 +362,32 @@ std::string sampling_json(const generation_sampling_config & sampling) {
 
 request parse_request_object(const value & root) {
     if (root.type != value::kind::object) fail("request must be a JSON object");
-    reject_unknown(root, {"lyrics", "description", "duration", "duration_seconds", "seed", "cfg_scale", "sampling", "flow"});
+    reject_unknown(root, {"lyrics", "caption", "description", "duration", "duration_seconds", "seed", "cfg_scale",
+                          "inference_steps", "guidance_scale", "sampling", "flow", "temperature", "top_k_mixed", "top_k_detail"});
     if (lookup(root, "duration") != nullptr && lookup(root, "duration_seconds") != nullptr) {
         fail("use only one of duration and duration_seconds");
     }
     request result;
-    result.lyrics = required(root, "lyrics", value::kind::string).string;
-    result.description = required(root, "description", value::kind::string).string;
-    if (!valid_utf8(result.lyrics) || !valid_utf8(result.description)) fail("lyrics and description must be valid UTF-8");
+    // Only the caption is required. An instrumental request carries no lyrics,
+    // and an unspecified length takes the default above; both are shapes the
+    // host can emit, so rejecting them would fail a valid job rather than
+    // catch a mistake.
+    if (const value * lyrics = lookup(root, "lyrics")) {
+        if (lyrics->type != value::kind::string) fail("lyrics must be a string");
+        result.lyrics = lyrics->string;
+    }
+    if (lookup(root, "caption") && lookup(root, "description")) fail("use only one of caption and description");
+    result.description = required(root, lookup(root, "caption") ? "caption" : "description", value::kind::string).string;
+    if (!valid_utf8(result.lyrics) || !valid_utf8(result.description)) fail("lyrics and caption must be valid UTF-8");
     const value * duration = lookup(root, "duration_seconds");
     if (duration == nullptr) duration = lookup(root, "duration");
-    if (duration == nullptr || duration->type != value::kind::number || !std::isfinite(duration->number)) {
-        fail("required duration_seconds must be a finite number");
+    if (duration == nullptr) {
+        result.duration_seconds = k_default_duration_seconds;
+    } else if (duration->type != value::kind::number || !std::isfinite(duration->number)) {
+        fail("duration_seconds must be a finite number");
+    } else {
+        result.duration_seconds = duration->number;
     }
-    result.duration_seconds = duration->number;
     if (const value * seed = lookup(root, "seed")) {
         if (seed->type != value::kind::null_value) {
             result.seed = exact_u64(*seed, "seed");
@@ -383,6 +401,12 @@ request parse_request_object(const value & root) {
         }
         result.cfg_scale = static_cast<float>(cfg->number);
     }
+    if (const value * item = lookup(root, "temperature")) {
+        if (item->type != value::kind::number || !std::isfinite(item->number) || item->number <= 0 || item->number > 10) fail("temperature must be in (0, 10]");
+        result.sampling.temperature = static_cast<float>(item->number);
+    }
+    if (const value * item = lookup(root, "top_k_mixed")) result.sampling.top_k_mixed = exact_size(*item, "top_k_mixed");
+    if (const value * item = lookup(root, "top_k_detail")) result.sampling.top_k_detail = exact_size(*item, "top_k_detail");
     if (const value * sampling = lookup(root, "sampling")) {
         if (sampling->type != value::kind::object) fail("sampling must be an object");
         reject_unknown(*sampling, {"use_sampling", "temperature", "top_k_mixed", "top_k_detail",
@@ -412,6 +436,20 @@ request parse_request_object(const value & root) {
                 result.sampling.ignore_tokens.push_back(static_cast<int64_t>(id));
             }
         }
+    }
+    // The host's engine-neutral names for the two knobs every family exposes.
+    // On LeVo they land on the Flow renderer, which is where step count and
+    // guidance actually bite. Read before `flow` so the engine-native block
+    // stays authoritative when a caller sets both.
+    if (const value * steps = lookup(root, "inference_steps")) {
+        result.flow_euler_steps = exact_size(*steps, "inference_steps");
+    }
+    if (const value * guidance = lookup(root, "guidance_scale")) {
+        if (guidance->type != value::kind::number || !std::isfinite(guidance->number) ||
+            guidance->number < 0.0 || guidance->number > std::numeric_limits<float>::max()) {
+            fail("guidance_scale must be a finite non-negative float");
+        }
+        result.flow_cfg_scale = static_cast<float>(guidance->number);
     }
     if (const value * flow = lookup(root, "flow")) {
         if (flow->type != value::kind::object) fail("flow must be an object");
@@ -444,10 +482,21 @@ codes parse_codes(const std::string & json) {
     }
     const value root = reader(json).parse();
     if (root.type != value::kind::object) fail("CODES input must be a JSON object");
-    reject_unknown(root, {"audio_codes", "frame_count", "request", "token_sha256"});
+    reject_unknown(root, {"audio_codes", "duration", "frame_count", "request", "token_sha256"});
     codes result;
     result.generation_request = parse_request_object(required(root, "request", value::kind::object));
     if (!result.generation_request.seed_present) fail("CODES request does not contain a resolved seed");
+    // The promoted copy is not a second source of truth: a blob whose two
+    // durations disagree has been edited, and DIFFUSE would then render a
+    // length nobody checked.
+    // Old checkpoints predate the promoted duration; their embedded request
+    // remains authoritative. New checkpoints must agree when both are present.
+    if (const value * promoted = lookup(root, "duration")) {
+        if (promoted->type != value::kind::number || !std::isfinite(promoted->number) ||
+            promoted->number != result.generation_request.duration_seconds) {
+            fail("CODES duration does not match its embedded request");
+        }
+    }
     result.frame_count = exact_size(required(root, "frame_count", value::kind::number), "frame_count");
     if (result.frame_count == 0 || result.frame_count > std::numeric_limits<std::size_t>::max() / 3U) {
         fail("CODES frame_count is invalid");
@@ -472,8 +521,8 @@ codes parse_codes(const std::string & json) {
 std::string serialize(const request & value) {
     if (!value.seed_present) fail("cannot serialize an unresolved request seed");
     std::ostringstream out;
-    out << "{\"cfg_scale\":" << number(value.cfg_scale)
-        << ",\"description\":" << escape(value.description)
+    out << "{\"caption\":" << escape(value.description)
+        << ",\"cfg_scale\":" << number(value.cfg_scale)
         << ",\"duration_seconds\":" << number(value.duration_seconds)
         << ",\"flow\":{\"cfg_scale\":" << number(value.flow_cfg_scale)
         << ",\"euler_steps\":" << value.flow_euler_steps
@@ -509,7 +558,11 @@ std::string serialize_codes(const request & value, const generation_result & res
         if (index) out << ',';
         out << result.tokens[index];
     }
-    out << "],\"frame_count\":" << result.frame_count
+    // `duration` is the one field promoted out of the nested request: the host
+    // reads it off every stage ahead of DIFFUSE to prove the engine did not
+    // quietly grow the length it was asked for before allocating for it.
+    out << "],\"duration\":" << number(value.duration_seconds)
+        << ",\"frame_count\":" << result.frame_count
         << ",\"request\":" << request_json
         << ",\"token_sha256\":" << escape(token_io::tensor_sha256(result.tokens)) << '}';
     return out.str();

@@ -205,12 +205,19 @@ it accepts a strict fresh request JSON and atomically fsyncs each checkpoint.
 ```json
 {
   "lyrics": "Come back to the light",
-  "description": "warm indie pop, female vocal",
-  "duration_seconds": 20,
+  "caption": "warm indie pop, female vocal",
+  "duration": 20,
   "seed": 1234,
   "flow": { "seed": 5678, "euler_steps": 50, "cfg_scale": 1.5 }
 }
 ```
+
+Only `caption` is required: omitted lyrics mean an instrumental, and an
+omitted duration takes a conventional song length. The names are the host's.
+Cantor emits one request dialect to every engine family, so `caption` is its
+word for the text prompt, and its engine-neutral `inference_steps` and
+`guidance_scale` land on the Flow renderer here — an explicit `flow` block
+overrides both.
 
 ```bash
 ./build-cuda/bin/levo-cantor \
