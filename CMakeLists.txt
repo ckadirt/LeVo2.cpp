@@ -24,6 +24,16 @@ if(GGML_CUDA AND NOT DEFINED GGML_CUDA_GRAPHS)
 endif()
 
 add_subdirectory(ggml)
+
+# A node process loads every engine family and unloads none. Identical ggml
+# SONAMEs let whichever family loads first satisfy every later family's
+# DT_NEEDED, so this engine can end up running on another family's ggml -- a
+# different version entirely. Give this family's ggml a name no other family
+# can answer to. The backend scanner globs libggml-<backend>-*.so, so these
+# stay clear of anything it probes for.
+set_target_properties(ggml-base PROPERTIES OUTPUT_NAME ggml-base-levo2)
+set_target_properties(ggml      PROPERTIES OUTPUT_NAME ggml-levo2)
+
 find_package(Threads REQUIRED)
 
 add_library(levo-core STATIC
