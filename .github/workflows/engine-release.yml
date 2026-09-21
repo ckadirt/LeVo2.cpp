@@ -281,6 +281,20 @@ jobs:
           )
           PY
 
+      - name: Show the fragment on the run page
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            echo '## Cantor backends fragment'
+            echo
+            echo 'Paste into `relay/public/backends/v1.json`, replacing this engine'"'"'s entry.'
+            echo
+            echo '```json'
+            cat levo2-backends-v1.fragment.json
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - uses: actions/upload-artifact@v4
         with:
           name: levo2-backends-v1-fragment
