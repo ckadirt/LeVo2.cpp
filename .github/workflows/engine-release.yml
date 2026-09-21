@@ -218,6 +218,9 @@ jobs:
               "bytes": int(byte_count),
           }, indent=2))
           PY
+          # Printed, not only written: the fragment is worth reading straight
+          # from the job log without downloading the artifact.
+          cat '${{ steps.package.outputs.name }}.json'
 
       - uses: actions/upload-artifact@v4
         with:
@@ -280,6 +283,8 @@ jobs:
               json.dumps(output, indent=2) + "\n", encoding="utf-8"
           )
           PY
+          echo '--- paste into relay/public/backends/v1.json ---'
+          cat levo2-backends-v1.fragment.json
 
       - name: Show the fragment on the run page
         shell: bash
