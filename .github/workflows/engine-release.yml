@@ -150,7 +150,12 @@ jobs:
           mkdir -p "$stage"
 
           install -m 0755 build/lib/liblevo-cantor-engine.so "$stage/libcantor_engine.so"
-          cp -a build/ggml/src/libggml.so* build/ggml/src/libggml-base.so* "$stage/"
+          # Globbed rather than named: CMakeLists gives this family's ggml its
+          # own SONAME (libggml-base-levo2) so three engine families can share
+          # one node process. Only the core libs live in ggml/src.
+          core_libs=(build/ggml/src/libggml*.so*)
+          test "${#core_libs[@]}" -ge 2
+          cp -a "${core_libs[@]}" "$stage/"
           cpu_libs=(build/bin/libggml-cpu*.so*)
           test "${#cpu_libs[@]}" -ge 2
           cp -a "${cpu_libs[@]}" "$stage/"

@@ -131,7 +131,10 @@ jobs:
 
           install -m 0755 build/bin/levo-cli build/bin/levo-render build/bin/levo-cantor build/bin/levo-quantize "${stage}/bin/"
           cp -a build/lib/liblevo-cantor-engine.so* "${stage}/lib/"
-          find build/ggml/src -maxdepth 1 \( -type f -o -type l \) \( -name 'libggml.so*' -o -name 'libggml-base.so*' \) -exec cp -a {} "${stage}/lib/" \;
+          # Matched by prefix rather than by exact name: CMakeLists gives this
+          # family's ggml its own SONAME (libggml-base-levo2) so three engine
+          # families can share one node process. Only the core libs live here.
+          find build/ggml/src -maxdepth 1 \( -type f -o -type l \) -name 'libggml*.so*' -exec cp -a {} "${stage}/lib/" \;
           # ggml loads backend plugins by scanning the executable directory.
           find build/bin -maxdepth 1 \( -type f -o -type l \) -name 'libggml-*.so*' -exec cp -a {} "${stage}/bin/" \;
           install -m 0644 LICENSE THIRD_PARTY_NOTICES.md README.md "${stage}/"
